@@ -71,9 +71,16 @@ testpaths = ["sklearn_hierarchical_classification/tests"]
 markers = [
     "slow: tests that download datasets or take more than a few seconds (deselect with '-m \"not slow\"')",
 ]
+# Deprecations anywhere fail the suite so that a deprecated scikit-learn/numpy/networkx call in library
+# code is caught before the API is removed. (Filters must be global: scikit-learn's own deprecation
+# machinery attributes warnings to sklearn.*, so a package-scoped filter would never fire.)
+# Known third-party warnings are ignored explicitly below.
 filterwarnings = [
-    "error::DeprecationWarning:sklearn_hierarchical_classification",
-    "error::FutureWarning:sklearn_hierarchical_classification",
+    "error::DeprecationWarning",
+    "error::FutureWarning",
+    "error::PendingDeprecationWarning",
+    # scikit-learn's dataset loaders under numpy >= 2.5 (sklearn/datasets/_base.py)
+    "ignore:Setting the shape on a NumPy array has been deprecated:DeprecationWarning",
 ]
 
 [tool.coverage.run]

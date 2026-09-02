@@ -3,6 +3,7 @@ Unit-tests for the classifier interface.
 
 """
 
+import numpy as np
 import pytest
 from hamcrest import (
     assert_that,
@@ -17,11 +18,13 @@ from networkx import DiGraph
 from numpy import where
 from sklearn import svm
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
 from sklearn.naive_bayes import MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
+from sklearn.pipeline import make_pipeline
 from sklearn.utils.estimator_checks import check_estimator
 
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
@@ -311,3 +314,64 @@ def test_nmlnp_strategy_on_dag_with_dummy_classifier():
     y_pred = clf.predict(X_test)
 
     assert_that(list(y_pred), has_item("3a"))
+
+
+def test_use_decision_function_with_preprocessed_features():
+    """Test that a base estimator exposing only `decision_function` (e.g. LinearSVC) works in the
+    default "preprocessed" mode, for both binary and multi-class local classifiers."""
+    class_hierarchy = {
+        ROOT: ["A", "B"],  # binary local classifier
+        "A": [1, 7],
+        "B": [3, 8, 9],  # multi-class local classifier
+    }
+    clf = make_classifier(
+        base_estimator=svm.LinearSVC(),
+        class_hierarchy=class_hierarchy,
+        use_decision_function=True,
+    )
+    X, y = make_digits_dataset(targets=[1, 7, 3, 8, 9], as_str=False)
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=RANDOM_STATE)
+
+    clf.fit(X_train, y_train)
+    y_pred = clf.predict(X_test)
+    y_proba = clf.predict_proba(X_test)
+
+    assert_that(accuracy_score(y_test, y_pred), is_(close_to(1.0, delta=0.05)))
+    assert_that(y_proba.shape, is_(equal_to((X_test.shape[0], clf.n_classes_))))
+
+
+def test_raw_feature_extraction_with_predict_proba_pipeline():
+    """Test "raw" mode with a feature extraction pipeline that exposes `predict_proba`,
+    where samples outside a node's subtree must be dropped when training that node."""
+    class_hierarchy = {
+        ROOT: ["fruit", "veg"],
+        "fruit": ["apple", "banana"],
+        "veg": ["carrot", "leek"],
+    }
+    X = [
+        "red apple pie",
+        "green apple juice",
+        "apple crumble",
+        "banana split",
+        "ripe banana bread",
+        "banana smoothie",
+        "carrot cake",
+        "grated carrot salad",
+        "roasted carrot",
+        "leek soup",
+        "leek and potato",
+        "braised leek",
+    ]
+    y = np.array(["apple"] * 3 + ["banana"] * 3 + ["carrot"] * 3 + ["leek"] * 3)
+    clf = make_classifier(
+        base_estimator=make_pipeline(CountVectorizer(), LogisticRegression()),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+    )
+
+    clf.fit(X, y)
+    y_pred = clf.predict(X)
+    y_proba = clf.predict_proba(X)
+
+    assert_that(list(y_pred), is_(equal_to(list(y))))
+    assert_that(y_proba.shape, is_(equal_to((len(X), clf.n_classes_))))

@@ -203,8 +203,9 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             Data.
 
         y : (sparse) array-like, shape = [n_samples, ], [n_samples, n_classes]
-            Multi-class targets. An indicator matrix turns on multilabel
-            classification.
+            Multi-class targets. A binary indicator matrix (as produced by the `MultiLabelBinarizer`
+            passed as `mlb`) turns on multi-label classification; this is only supported together
+            with `feature_extraction="raw"`.
 
         Returns
         -------
@@ -347,13 +348,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             return self.graph_.nodes[node_id]["X"]
 
         # Non-leaf node
-        if self.feature_extraction == "raw":
-            self.graph_.nodes[node_id]["X"] = []
-        else:
-            self.graph_.nodes[node_id]["X"] = csr_matrix(
-                X.shape,
-                dtype=X.dtype,
-            )
+        self.graph_.nodes[node_id]["X"] = csr_matrix(X.shape, dtype=X.dtype)
 
         for child_node_id in self.graph_.successors(node_id):
             self.graph_.nodes[node_id]["X"] += self._recursive_build_features(
@@ -385,7 +380,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         return X_out
 
     def _build_features(self, X, y, indices):
-        X_ = [X[ix] for ix in indices] if self.feature_extraction == "raw" else extract_rows_csr(X, indices)
+        X_ = extract_rows_csr(X, indices)
 
         # Perform feature selection
         X_ = self._select_features(X=X_, y=np.array(y)[indices])
@@ -422,15 +417,6 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             * "n_targets" - Number of targets (classes) to classify into at given node.
 
         """
-        if self.feature_extraction == "raw":
-            # In raw mode, we do not know which training examples are "zeroed out" for which node
-            # since we do not recursively build features until the recursive training phase which comes afterwards.
-            # Therefore, the number of targets is simply the number of unique labels in y
-            return {
-                "n_samples": len(X),
-                "n_targets": len(np.unique(y)),
-            }
-
         # Indices of non-zero rows in X, i.e rows corresponding to relevant samples for this node.
         ix = nnz_rows_ix(X)
 
@@ -478,6 +464,15 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             graph=self.graph_, source=node_id, targets=[y[idx] for idx in nnz_rows], mlb=self.mlb
         )
 
+        # Drop samples whose target does not lie below the current node (e.g. samples labeled with the node
+        # itself, or with a node in another branch, which is the common case in "raw" mode where X_ is the
+        # entire training set). They carry no signal for choosing among this node's children, and keeping
+        # them would misalign X_ and the flattened y_ below.
+        keep = [i for i, labels in enumerate(y_rolled_up) if labels]
+        if len(keep) < len(y_rolled_up):
+            X_ = [X_[i] for i in keep] if self.feature_extraction == "raw" else X_[keep, :]
+            y_rolled_up = [y_rolled_up[i] for i in keep]
+
         if self.is_tree_:
             if self.mlb is None:
                 y_ = flatten_list(y_rolled_up)
@@ -504,7 +499,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             num_targets,
         )
 
-        if self.feature_extraction == "preprocessed" and X_.shape[0] == 0:
+        n_samples = len(X_) if self.feature_extraction == "raw" else X_.shape[0]
+        if n_samples == 0:
             # No training data could be materialized for current node
             # TODO: support a "strict" mode flag to explicitly enable/disable fallback logic here?
             self.logger.warning(
@@ -527,23 +523,26 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         else:
             clf = self._base_estimator_for(node_id)
 
-        if self.feature_extraction == "raw":
-            if len(X_) > 0:
-                clf.fit(X=X_, y=y_)
-                self.logger.debug(
-                    "_train_local_classifier() - training node %s ",
-                    node_id,
-                )
-                self.graph_.nodes[node_id][CLASSIFIER] = clf
-            else:
-                self.logger.debug(
-                    "_train_local_classifier() - could not train  node %s ",
-                    node_id,
-                )
+        clf.fit(X=X_, y=y_)
+        self.graph_.nodes[node_id][CLASSIFIER] = clf
 
-        else:
-            clf.fit(X=X_, y=y_)
-            self.graph_.nodes[node_id][CLASSIFIER] = clf
+    def _local_scores(self, clf, x):
+        """
+        Score a single sample with the local classifier at a node.
+
+        Returns a 1-D array of per-class scores aligned with ``clf.classes_``, regardless of
+        feature extraction mode (a raw sample is wrapped as a length-1 batch) and of whether
+        scores come from ``decision_function`` or ``predict_proba``.
+
+        """
+        x_ = [x] if self.feature_extraction == "raw" else x
+        if self.use_decision_function and hasattr(clf, "decision_function"):
+            scores = np.asarray(clf.decision_function(x_)).reshape(-1)
+            if len(clf.classes_) == 2 and scores.shape[0] == 1:
+                # A binary decision_function returns a single signed score for classes_[1]
+                scores = np.array([-scores[0], scores[0]])
+            return scores
+        return np.asarray(clf.predict_proba(x_)).reshape(-1)
 
     def _recursive_predict(self, x, root):
         if CLASSIFIER not in self.graph_.nodes[root]:
@@ -555,20 +554,9 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         class_proba = np.zeros_like(self.classes_, dtype=np.float64)
 
         while clf:
-            if self.use_decision_function and hasattr(clf, "decision_function"):
-                if self.feature_extraction == "raw":
-                    probs = clf.decision_function([x])
-                    argmax = np.argmax(probs)
-                    score = probs[0, argmax]
-
-                else:
-                    probs = clf.decision_function(x)
-                    argmax = np.argmax(probs)
-                    score = probs[argmax]
-            else:
-                probs = clf.predict_proba(x)[0]
-                argmax = np.argmax(probs)
-                score = probs[argmax]
+            probs = self._local_scores(clf, x)
+            argmax = np.argmax(probs)
+            score = probs[argmax]
 
             path_proba.append(score)
             if self.mlb is not None:
@@ -582,7 +570,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
                 if self.mlb:
                     # when we have a multi-label binarizer
                     class_idx = class_
-                    class_proba[class_idx] = probs[0, local_class_idx]
+                    class_proba[class_idx] = probs[local_class_idx]
                     if class_proba[class_idx] > self.mlb_prediction_threshold:
                         predictions.append(self.mlb.classes_[class_])
                 else:
@@ -598,14 +586,9 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
                             path,
                         )
                         raise
-                    if len(probs.shape) > 1 and probs.shape[0] == 1:
-                        class_proba[class_idx] = probs[0, local_class_idx]
-                        if local_class_idx == argmax:
-                            prediction = class_
-                    else:
-                        class_proba[class_idx] = probs[local_class_idx]
-                        if local_class_idx == argmax:
-                            prediction = class_
+                    class_proba[class_idx] = probs[local_class_idx]
+                    if local_class_idx == argmax:
+                        prediction = class_
 
             if self.mlb is None:
                 if self._should_early_terminate(

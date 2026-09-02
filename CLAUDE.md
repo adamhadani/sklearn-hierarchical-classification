@@ -22,12 +22,21 @@ declaring `input_tags.sparse = True`, and no `sample_weight` parameter on `fit`
 (it was previously accepted and silently ignored, which the checks now reject). Do not
 "simplify" any of these away.
 
-**Two feature-extraction modes share one code path.** `feature_extraction="preprocessed"`
-(default) expects a 2-D feature matrix and works in CSR sparse throughout; `"raw"`
-expects a Python sequence of raw samples (e.g. text) and the base estimator must be a
-`Pipeline` that does its own feature extraction. In raw mode `X` is a list, so nothing
-may call `.shape` on it; the raw-mode helpers (`apply_rollup_Xy_raw`, `_build_features`)
-are the places this has gone wrong before.
+**Two feature-extraction modes, two training paths.** `feature_extraction="preprocessed"`
+(default) expects a 2-D feature matrix, builds per-node CSR feature matrices in
+`_recursive_build_features`, and trains each node on its non-zero rows. `"raw"` expects a
+Python sequence of raw samples (e.g. text), skips feature building entirely, and hands the
+*whole* training set to `_train_local_classifier` at every node, which is why that
+function drops samples whose rolled-up target is empty (not below the node) before
+fitting. In raw mode `X` is a list, so nothing may call `.shape` on it
+(`apply_rollup_Xy_raw` has gone wrong here before). Multi-label (`mlb`) only works in raw
+mode; `validate_data` rejects a 2-D indicator `y` in preprocessed mode.
+
+**Every node classifier is scored through `_local_scores`**, which wraps a raw sample as a
+length-1 batch and normalises `decision_function` / `predict_proba` output to a 1-D array
+aligned with `clf.classes_` (a binary `decision_function` returns one signed score, which
+is expanded to two). Index `probs[local_class_idx]` only; never reintroduce
+mode-specific indexing in `_recursive_predict`.
 
 **Tree vs DAG hierarchies roll up differently** in `_train_local_classifier`: on a tree
 the rolled-up labels are flattened; on a DAG a sample can belong to several children so
@@ -43,11 +52,13 @@ multi-label newsgroups test.
 constant is wrapped as a 1-element list because scikit-learn's parameter validation
 rejects numpy scalars for `constant`.
 
-**Warnings from this package are errors in tests.** `filterwarnings` in `pyproject.toml`
-turns `DeprecationWarning`/`FutureWarning` attributed to `sklearn_hierarchical_classification`
-into failures, so a deprecated scikit-learn/numpy/networkx call in library code fails CI
-before the API is removed. Warnings raised inside third-party code (e.g. scikit-learn's own
-dataset loaders under new numpy) are deliberately not caught.
+**Deprecation warnings are errors in tests, globally.** `filterwarnings` in `pyproject.toml`
+turns every `DeprecationWarning`/`FutureWarning` into a failure, so a deprecated
+scikit-learn/numpy/networkx call fails CI before the API is removed. The filter has to be
+global: scikit-learn attributes its deprecation warnings to `sklearn.*`, so a
+package-scoped filter never fires. Known third-party noise (e.g. scikit-learn's dataset
+loaders under numpy 2.5) gets an explicit `ignore` entry next to it; add to that list
+rather than weakening the `error` entries.
 
 **Tests live inside the package** (`sklearn_hierarchical_classification/tests/`) and are
 excluded from the wheel via `packages.find.exclude` plus `include-package-data = false`.
@@ -60,9 +71,10 @@ The pre-commit hook runs `-m "not slow"`; CI runs everything with the dataset di
 cached.
 
 **Version comes from git tags only** (setuptools-scm). There is no version string in the
-tree; do not add one. Tags are plain `X.Y.Z` (no `v` prefix), matching the existing tag
-history. Pushing a tag triggers `publish-to-pypi.yml`, which needs a PyPI trusted publisher
-configured for this repo and a `pypi` GitHub environment.
+tree; do not add one (`docs/source/conf.py` reads it from package metadata). Tags are
+plain `X.Y.Z` (no `v` prefix), matching the existing tag history, and only tags of that
+exact shape trigger the publish jobs in `publish-to-pypi.yml`, which needs a PyPI trusted
+publisher configured for this repo and a `pypi` GitHub environment.
 
 **Tooling versions come from `uv.lock` only.** Ruff/mypy/pytest run in pre-commit as
 `local`/`system` hooks invoking `uv run ...`, and CI's lint job runs

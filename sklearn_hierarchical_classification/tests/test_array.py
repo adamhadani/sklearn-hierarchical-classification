@@ -1,7 +1,8 @@
 import numpy as np
 from hamcrest import assert_that, equal_to, is_
+from scipy.sparse import coo_matrix, csr_array
 
-from sklearn_hierarchical_classification.array import apply_rollup_Xy, apply_rollup_Xy_raw
+from sklearn_hierarchical_classification.array import apply_along_rows, apply_rollup_Xy, apply_rollup_Xy_raw
 
 
 def test_apply_rollup_xy():
@@ -44,3 +45,20 @@ def test_apply_rollup_xy_raw_no_expansion():
 
     assert_that(X_, is_(equal_to(X)))
     assert_that(y_, is_(equal_to([0, 1])))
+
+
+def test_apply_along_rows_sparse_formats():
+    X = np.arange(6).reshape(3, 2)
+    expected = [1, 5, 9]
+
+    for X_sparse in (csr_array(X), coo_matrix(X)):
+        assert_that(list(apply_along_rows(lambda row: row.sum(), X_sparse)), is_(equal_to(expected)))
+
+
+def test_apply_rollup_xy_all_empty():
+    X = np.arange(6).reshape(3, 2)
+
+    X_, y_ = apply_rollup_Xy(X, [[], [], []])
+
+    assert_that(X_.shape, is_(equal_to((0, 2))))
+    assert_that(y_, is_(equal_to([])))

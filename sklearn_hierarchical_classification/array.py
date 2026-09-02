@@ -18,7 +18,9 @@ def apply_along_rows(func, X):
 
     """
     if issparse(X):
-        # Nb. slice rather than index so that the row stays 2-D for both sparse matrices and sparse arrays
+        # Nb. convert so that row slicing works for every sparse format (coo/dia/bsr are not subscriptable),
+        # and slice rather than index so that the row stays 2-D for both sparse matrices and sparse arrays
+        X = X.tocsr()
         return np.array([func(X[i : i + 1]) for i in range(X.shape[0])])
     else:
         # XXX might break vis-a-vis this issue merging: https://github.com/numpy/numpy/pull/8511
@@ -50,9 +52,13 @@ def apply_rollup_Xy(X, y):
     # Compute number of rows we will have after transformation
     n_rows = sum(len(labelset) for labelset in y)
 
-    if n_rows == X.shape[0]:
+    if all(len(labelset) == 1 for labelset in y):
         # No expansion needed
         return X, flatten_list(y)
+
+    if n_rows == 0:
+        # Every labelset is empty, nothing to materialize
+        return csr_matrix((0, X.shape[1]), dtype=X.dtype), []
 
     if not isinstance(X, csr_matrix):
         # Performance improvements require csr matrix
@@ -103,10 +109,7 @@ def apply_rollup_Xy_raw(X, y):
         Transformed by 'flattening' out y parameter and duplicating corresponding rows in X
 
     """
-    # Compute number of rows we will have after transformation
-    n_rows = sum(len(labelset) for labelset in y)
-
-    if n_rows == len(X):
+    if all(len(labelset) == 1 for labelset in y):
         # No expansion needed
         return X, flatten_list(y)
 

@@ -1,6 +1,8 @@
-# Build on every push; publish to PyPI (trusted publishing) and cut a GitHub
-# Release only when a version tag (e.g. `1.4.0`) is pushed. The package version
-# is derived from the tag by setuptools-scm, so nothing needs bumping in-tree.
+# Build on every push to the main branches; publish to PyPI (trusted publishing)
+# and cut a GitHub Release only when a version tag of the form `X.Y.Z` (e.g.
+# `1.4.0`, no `v` prefix) is pushed. The package version is derived from the tag
+# by setuptools-scm, so nothing needs bumping in-tree. Other tags are ignored so a
+# stray tag can never publish a bogus version.
 
 name: Publish to PyPI
 
@@ -10,7 +12,7 @@ permissions:
 on:
   push:
     branches: [ "develop", "master" ]
-    tags: [ "*" ]
+    tags: [ "[0-9]+.[0-9]+.[0-9]+" ]
 
 jobs:
   build:

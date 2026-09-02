@@ -10,10 +10,10 @@ Hierarchical classification module based on scikit-learn's interfaces and conven
 `HierarchicalClassifier` is a scikit-learn compatible meta-estimator that fits a "local classifier per
 parent node" over a class hierarchy given as a tree or DAG (a `networkx.DiGraph` or an adjacency dict),
 and predicts by walking the hierarchy top-down. It supports mandatory and non-mandatory leaf-node
-prediction (early stopping), multi-label targets via `MultiLabelBinarizer`, per-node base estimators,
-and a "raw" feature-extraction mode where the base estimator is a full `Pipeline` operating on raw
-inputs such as text. Hierarchical precision/recall/F-beta metrics are provided in
-`sklearn_hierarchical_classification.metrics`.
+prediction (early stopping), per-node base estimators, and a "raw" feature-extraction mode where the
+base estimator is a full `Pipeline` operating on raw inputs such as text. Multi-label targets (via a
+`MultiLabelBinarizer` passed as `mlb`) are supported in raw mode. Hierarchical precision/recall/F-beta
+metrics are provided in `sklearn_hierarchical_classification.metrics`.
 
 See the GitHub Pages hosted documentation [here](http://code.globality.com/sklearn-hierarchical-classification/).
 
@@ -74,6 +74,17 @@ clf = HierarchicalClassifier(
     use_decision_function=True,  # LinearSVC exposes decision_function rather than predict_proba
 )
 ```
+
+
+## Upgrading from 1.3.x
+
+- Python 3.11+ and scikit-learn 1.6+ are required.
+- `HierarchicalClassifier.fit()` no longer accepts `sample_weight`. It was accepted but never used
+  (weights were silently ignored), which current scikit-learn estimator checks reject.
+- The default base estimator is `LogisticRegression(solver="lbfgs")` without the removed
+  `multi_class="multinomial"` argument. On scikit-learn 1.6/1.7 this means binary local classifiers use
+  one-vs-rest, so predicted probabilities (and hence `nmlnp` stopping decisions) can differ slightly
+  from 1.3.x; on scikit-learn 1.8+ there is no difference.
 
 
 ## Development
