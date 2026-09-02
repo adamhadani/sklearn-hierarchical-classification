@@ -41,7 +41,11 @@ node's training set as an all-zero row on purpose, so the local classifier can r
 documents a parent mis-routes to it. Metafeatures still describe the subtree.
 `mlb_prediction_threshold` may be an array aligned with `mlb.classes_` (per-class cut-offs
 tuned on out-of-fold scores); predicting with `-inf` visits every node and yields the full
-score matrix for such tuning.
+score matrix for such tuning, which `thresholds.scut_thresholds` consumes. Tune per class
+*locally* (pass `graph`): sibling-trained local classifiers give meaningless scores to
+out-of-subtree samples, and a global SCut on the all-node matrix gets worse than no tuning
+(RCV1: 0.819 vs 0.827 OOF micro-F1; local: 0.838). `mlb_min_root_predictions` forces the
+best-scoring root children for samples that would otherwise get no top-level label.
 
 **`rollup_nodes` uses a descendant map, not `all_simple_paths`.** `children_by_descendant`
 maps every strict descendant of the source to the children it lies under, so each child is
