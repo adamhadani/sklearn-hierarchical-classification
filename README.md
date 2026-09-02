@@ -55,8 +55,11 @@ y_pred = clf.predict(X_test)
 ```
 
 The base estimator must expose `predict_proba` (or `decision_function`, when
-`use_decision_function=True`). See [examples/](./examples/) for a complete, runnable example that also
-demonstrates the hierarchical evaluation metrics.
+`use_decision_function=True`). For multi-label hierarchies pass the fitted `MultiLabelBinarizer` as
+`mlb`; `mlb_prediction_threshold` then takes either one threshold or one per class, and
+`training_strategy="inclusive"` trains each node on out-of-subtree documents as negatives as well, which
+lets tuned thresholds recover from routing mistakes higher up. See [examples/](./examples/) for a
+complete, runnable example that also demonstrates the hierarchical evaluation metrics.
 
 ### Jupyter notebooks
 

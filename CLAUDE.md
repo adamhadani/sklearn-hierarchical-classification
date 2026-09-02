@@ -35,7 +35,13 @@ feature row is still a training sample. The fitted model keeps no reference to t
 data; `graph_.nodes[n]` holds only `metafeatures` and `classifier`. Multi-label (`mlb`) works in
 both modes: the indicator `y` is densified up front and validated with `multi_output=True`.
 Rolled-up children unknown to the binarizer give all-zero rows, which are dropped; a node
-left with none gets no classifier and a warning.
+left with none gets no classifier and a warning. The exception is
+`training_strategy="inclusive"` (mlb only): every document outside the subtree joins the
+node's training set as an all-zero row on purpose, so the local classifier can reject
+documents a parent mis-routes to it. Metafeatures still describe the subtree.
+`mlb_prediction_threshold` may be an array aligned with `mlb.classes_` (per-class cut-offs
+tuned on out-of-fold scores); predicting with `-inf` visits every node and yields the full
+score matrix for such tuning.
 
 **`rollup_nodes` uses a descendant map, not `all_simple_paths`.** `children_by_descendant`
 maps every strict descendant of the source to the children it lies under, so each child is
