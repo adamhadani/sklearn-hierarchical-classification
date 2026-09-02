@@ -22,31 +22,32 @@ declaring `input_tags.sparse = True`, and no `sample_weight` parameter on `fit`
 (it was previously accepted and silently ignored, which the checks now reject). Do not
 "simplify" any of these away.
 
-**Two feature-extraction modes, two training paths.** `feature_extraction="preprocessed"`
-(default) expects a 2-D feature matrix, builds per-node CSR feature matrices in
-`_recursive_build_features`, and trains each node on its non-zero rows. `"raw"` expects a
-Python sequence of raw samples (e.g. text), skips feature building entirely, and hands the
-*whole* training set to `_train_local_classifier` at every node, which is why that
-function drops samples whose rolled-up target is empty (not below the node) before
-fitting. In raw mode `X` is a list, so nothing may call `.shape` on it
-(`apply_rollup_Xy_raw` has gone wrong here before). Multi-label (`mlb`) only works in raw
-mode; `validate_data` rejects a 2-D indicator `y` in preprocessed mode.
+**Training selects rows by label; it never materialises per-node feature matrices.**
+`_train_local_classifiers` visits nodes in depth-first order from the root (deterministic, so
+seeded base estimators reproduce). A node's training set is the samples labeled with any
+*strict* descendant (samples labeled with the node itself belong to its parent's set), taken
+from a label → row-indices dict built once for either target encoding and sliced out of `X`
+by index through `_rows`, which is the one place that knows raw `X` is a Python list.
+Row sets are unions, so a DAG node with two parents contributes its rows once to each
+ancestor; on a DAG a sample under several children is repeated by index, so the input type
+(dense or sparse) is preserved at every node. Rows are chosen by label only: an all-zero
+feature row is still a training sample. The fitted model keeps no reference to the training
+data; `graph_.nodes[n]` holds only `metafeatures` and `classifier`. Multi-label (`mlb`) only
+works in raw mode: `validate_data` rejects a 2-D indicator `y` in preprocessed mode. Rolled-up
+children unknown to the binarizer give all-zero rows, which are dropped; a node left with
+none gets no classifier and a warning.
+
+**`rollup_nodes` uses a descendant map, not `all_simple_paths`.** `children_by_descendant`
+maps every strict descendant of the source to the children it lies under, so each child is
+listed once per target even when several paths run through it, and targets outside the
+subtree (including the source itself) roll up to `[]`. Roll-up runs once per *distinct* label at a node (`np.unique` + inverse), so
+nothing loops over samples in Python during training.
 
 **Every node classifier is scored through `_local_scores`**, which wraps a raw sample as a
 length-1 batch and normalises `decision_function` / `predict_proba` output to a 1-D array
 aligned with `clf.classes_` (a binary `decision_function` returns one signed score, which
 is expanded to two). Index `probs[local_class_idx]` only; never reintroduce
 mode-specific indexing in `_recursive_predict`.
-
-**Tree vs DAG hierarchies roll up differently** in `_train_local_classifier`: on a tree
-the rolled-up labels are flattened; on a DAG a sample can belong to several children so
-rows are duplicated via `apply_rollup_Xy(_raw)`. `is_tree_` is computed once in `fit`.
-
-**`rollup_nodes` must skip single-node paths.** networkx >= 3.0 makes
-`all_simple_paths(G, s, s)` yield `[[s]]` (older versions yielded nothing), so a sample
-labeled with the node currently being trained produces a path with no `path[1]`. The
-`len(path) > 1` guards there are load-bearing; this only shows up in the slow
-multi-label newsgroups test.
 
 **Single-target nodes fall back to `DummyClassifier(strategy="constant")`**, and the
 constant is wrapped as a 1-element list because scikit-learn's parameter validation

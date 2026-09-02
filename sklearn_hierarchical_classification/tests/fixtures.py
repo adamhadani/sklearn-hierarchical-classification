@@ -194,3 +194,29 @@ def make_clothing_graph_and_data(root=ROOT):
     X = np.random.normal(size=(len(y), 10))
 
     return G, (X, y)
+
+
+def make_fruit_veg_raw_data():
+    """Create a tiny raw-text dataset over a two-level fruit/vegetable hierarchy.
+
+    Returns the raw documents, the (leaf, parent) label pair of each document, and the hierarchy.
+
+    """
+    class_hierarchy = {ROOT: ["fruit", "veg"], "fruit": ["apple", "banana"], "veg": ["carrot", "leek"]}
+    X = [
+        "red apple pie",
+        "green apple juice",
+        "apple crumble",
+        "banana split",
+        "ripe banana bread",
+        "banana smoothie",
+        "carrot cake",
+        "grated carrot salad",
+        "roasted carrot",
+        "leek soup",
+        "leek and potato",
+        "braised leek",
+    ]
+    leaves = ["apple"] * 3 + ["banana"] * 3 + ["carrot"] * 3 + ["leek"] * 3
+    labels = [(leaf, "fruit" if leaf in ("apple", "banana") else "veg") for leaf in leaves]
+    return X, labels, class_hierarchy

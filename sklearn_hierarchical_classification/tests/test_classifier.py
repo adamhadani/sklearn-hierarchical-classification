@@ -3,6 +3,8 @@ Unit-tests for the classifier interface.
 
 """
 
+import pickle
+
 import numpy as np
 import pytest
 from hamcrest import (
@@ -14,17 +16,20 @@ from hamcrest import (
     has_item,
     is_,
 )
-from networkx import DiGraph
+from networkx import DiGraph, dfs_preorder_nodes
 from numpy import where
+from scipy.sparse import csr_matrix
 from sklearn import svm
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
-from sklearn.naive_bayes import MultinomialNB
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
+from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.utils.estimator_checks import check_estimator
 
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
@@ -32,8 +37,10 @@ from sklearn_hierarchical_classification.constants import CLASSIFIER, DEFAULT, R
 from sklearn_hierarchical_classification.tests.fixtures import (
     make_classifier,
     make_classifier_and_data,
+    make_clothing_graph,
     make_clothing_graph_and_data,
     make_digits_dataset,
+    make_fruit_veg_raw_data,
     make_mlb_classifier_and_data_with_feature_extraction_pipeline,
 )
 from sklearn_hierarchical_classification.tests.matchers import matches_graph
@@ -343,26 +350,8 @@ def test_use_decision_function_with_preprocessed_features():
 def test_raw_feature_extraction_with_predict_proba_pipeline():
     """Test "raw" mode with a feature extraction pipeline that exposes `predict_proba`,
     where samples outside a node's subtree must be dropped when training that node."""
-    class_hierarchy = {
-        ROOT: ["fruit", "veg"],
-        "fruit": ["apple", "banana"],
-        "veg": ["carrot", "leek"],
-    }
-    X = [
-        "red apple pie",
-        "green apple juice",
-        "apple crumble",
-        "banana split",
-        "ripe banana bread",
-        "banana smoothie",
-        "carrot cake",
-        "grated carrot salad",
-        "roasted carrot",
-        "leek soup",
-        "leek and potato",
-        "braised leek",
-    ]
-    y = np.array(["apple"] * 3 + ["banana"] * 3 + ["carrot"] * 3 + ["leek"] * 3)
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    y = np.array([leaf for leaf, _ in labels])
     clf = make_classifier(
         base_estimator=make_pipeline(CountVectorizer(), LogisticRegression()),
         class_hierarchy=class_hierarchy,
@@ -375,3 +364,142 @@ def test_raw_feature_extraction_with_predict_proba_pipeline():
 
     assert_that(list(y_pred), is_(equal_to(list(y))))
     assert_that(y_proba.shape, is_(equal_to((len(X), clf.n_classes_))))
+
+
+class RecordingLogisticRegression(LogisticRegression):
+    """Base estimator that keeps the training matrix it was fitted on, for inspection in tests."""
+
+    def fit(self, X, y, sample_weight=None):
+        self.X_fit_ = X
+        return super().fit(X, y, sample_weight=sample_weight)
+
+
+def test_dag_shared_descendant_rows_are_not_doubled():
+    r"""On a DAG, rows of a leaf with two parents must reach the grandparent's classifier once,
+    with their original values, not summed once per path.
+
+            ROOT
+           /    \
+          A      B
+         / \    / \
+        M   L  L   N
+    """
+    graph = DiGraph([(ROOT, "A"), (ROOT, "B"), ("A", "L"), ("B", "L"), ("A", "M"), ("B", "N")])
+    X = csr_matrix(np.array([[1.0, 0.0], [0.0, 2.0], [3.0, 0.0], [0.0, 4.0]]))
+    y = np.array(["L", "L", "M", "N"])
+    clf = make_classifier(base_estimator=RecordingLogisticRegression(), class_hierarchy=graph)
+
+    clf.fit(X, y)
+
+    X_root = clf.graph_.nodes[ROOT][CLASSIFIER].X_fit_
+    assert_that(X_root.shape, is_(equal_to((6, 2))))  # the two L rows are used for both A and B
+    assert_that(sorted(X_root.toarray().tolist()), is_(equal_to(sorted((X[[0, 1, 0, 1, 2, 3]]).toarray().tolist()))))
+
+
+def test_fitted_model_does_not_retain_training_data():
+    clf_small, (X_small, y_small) = make_classifier_and_data(n_classes=5, n_samples=200)
+    clf_large, (X_large, y_large) = make_classifier_and_data(n_classes=5, n_samples=20_000)
+
+    clf_small.fit(X_small, y_small)
+    clf_large.fit(X_large, y_large)
+
+    assert_that(any("X" in attrs for _, attrs in clf_large.graph_.nodes(data=True)), is_(False))
+    size_small, size_large = len(pickle.dumps(clf_small)), len(pickle.dumps(clf_large))
+    assert_that(
+        size_large < 1.2 * size_small, is_(True), f"pickled size grew with n_samples: {size_small} -> {size_large}"
+    )
+
+
+def test_select_features_hook_receives_each_node_training_subset():
+    """The overridable _select_features hook is called once per trained node with that node's
+    training rows (and their targets), so subclasses can do per-node feature selection."""
+    calls = []
+
+    class SelectingClassifier(HierarchicalClassifier):
+        def _select_features(self, X, y):
+            calls.append((X.shape[0], len(np.unique(y))))
+            return X
+
+    class_hierarchy = {ROOT: ["A", "B"], "A": [1, 7], "B": [3, 8, 9]}
+    X, y = make_digits_dataset(targets=[1, 7, 3, 8, 9], as_str=False)
+    clf = SelectingClassifier(base_estimator=LogisticRegression(max_iter=1_000), class_hierarchy=class_hierarchy)
+
+    clf.fit(X, y)
+
+    expected = {
+        (X.shape[0], 5),  # ROOT: all rows, 5 leaf targets
+        (np.isin(y, [1, 7]).sum(), 2),  # A
+        (np.isin(y, [3, 8, 9]).sum(), 3),  # B
+    }
+    assert_that(set(calls), is_(equal_to(expected)))
+    assert_that(len(calls), is_(equal_to(3)))
+
+
+def test_local_classifiers_are_trained_in_depth_first_order():
+    """Training order is the deterministic depth-first order of the hierarchy (successor insertion
+    order), so base estimators drawing from a seeded global RNG give reproducible fits."""
+    graph = make_clothing_graph()
+    graph.add_edge("Bottoms", "Pants")
+    graph.add_edge("Bottoms", "Shorts")
+    visited = []
+
+    class OrderRecordingClassifier(HierarchicalClassifier):
+        def _train_local_classifier(self, X, y, node_id, rows_by_label):
+            visited.append(node_id)
+            return super()._train_local_classifier(X, y, node_id, rows_by_label)
+
+    X = np.random.normal(size=(60, 4))
+    y = np.random.choice(["Shirts", "Jackets", "Swim", "Pants", "Shorts"], size=60)
+    clf = OrderRecordingClassifier(base_estimator=LogisticRegression(), class_hierarchy=graph)
+
+    clf.fit(X, y)
+
+    assert_that(visited, is_(equal_to(list(dfs_preorder_nodes(graph, ROOT)))))
+
+
+def test_dense_input_stays_dense_at_dag_nodes():
+    """A base estimator that requires dense input must get dense rows at every node, including DAG
+    nodes where rows are duplicated across children."""
+    graph = DiGraph([(ROOT, "A"), (ROOT, "B"), ("A", "L"), ("B", "L"), ("A", "M"), ("B", "N")])
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(40, 3))
+    y = np.array(["L", "M", "N", "L"] * 10)
+    clf = make_classifier(base_estimator=GaussianNB(), class_hierarchy=graph)
+
+    clf.fit(X, y)
+
+    assert_that(set(clf.predict(X).tolist()) <= {"L", "M", "N"}, is_(True))
+
+
+def test_mlb_children_unknown_to_binarizer_leave_node_untrained():
+    """If a node's children are not classes of the MultiLabelBinarizer, its rolled-up targets are
+    all-zero rows: there is nothing to train on, so the node gets no classifier (and a warning)."""
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    leaves_only = MultiLabelBinarizer().fit([[leaf] for leaf, _ in labels])
+    clf = make_classifier(
+        base_estimator=make_pipeline(CountVectorizer(), OneVsRestClassifier(LogisticRegression())),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+        mlb=leaves_only,
+    )
+
+    with pytest.warns(UserWarning):
+        clf.fit(X, leaves_only.transform([[leaf] for leaf, _ in labels]))
+
+    assert_that(CLASSIFIER in clf.graph_.nodes[ROOT], is_(False))
+    assert_that(CLASSIFIER in clf.graph_.nodes["fruit"], is_(True))
+
+
+def test_mlb_accepts_sparse_indicator_targets():
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    mlb = MultiLabelBinarizer(sparse_output=True).fit(labels)
+    clf = make_classifier(
+        base_estimator=make_pipeline(CountVectorizer(), OneVsRestClassifier(LogisticRegression())),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+        mlb=mlb,
+    )
+
+    clf.fit(X, mlb.transform(labels))
+
+    assert_that(clf.predict_proba(X).shape, is_(equal_to((len(X), len(mlb.classes_)))))
