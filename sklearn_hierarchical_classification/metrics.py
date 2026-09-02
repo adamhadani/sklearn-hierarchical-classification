@@ -3,6 +3,7 @@ Evaluation metrics for hierarchical classification.
 
 """
 
+from collections.abc import Iterable
 from contextlib import contextmanager
 
 import numpy as np
@@ -62,10 +63,22 @@ def multi_labeled(y_true, y_pred, graph):
 
 
 def _as_label_sets(y):
-    """Wrap scalar labels (e.g. a 1-D array of strings) as one-element label sets, since
-    MultiLabelBinarizer.transform expects an iterable of iterables and would otherwise
-    iterate over the characters of a string label."""
-    return [[label] if isinstance(label, str | bytes) or np.ndim(label) == 0 else label for label in y]
+    """
+    Normalise targets to the iterable-of-label-sets form MultiLabelBinarizer.transform expects.
+
+    A sequence of scalar labels (e.g. a 1-D array of strings) is wrapped as one-element label
+    sets, since the binarizer would otherwise iterate over the characters of each string. The
+    encoding is decided once from the first element, so sets and lists of labels pass through
+    unchanged, and an already-binarized indicator matrix is rejected rather than misread.
+
+    """
+    if isinstance(y, np.ndarray) and y.ndim == 2:
+        raise ValueError("expected one label or a set of labels per sample, got a 2-D indicator matrix")
+
+    first = next(iter(y), None)
+    if first is None or (isinstance(first, Iterable) and not isinstance(first, str | bytes)):
+        return y
+    return [[label] for label in y]
 
 
 def fill_ancestors(y, graph, root, copy=True):
