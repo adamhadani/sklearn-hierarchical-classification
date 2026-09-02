@@ -94,6 +94,9 @@ class ParameterValidator:
                 f"{len(self.mlb.classes_)} classes; give one threshold per class in the order of mlb.classes_."
             )
 
+        if not isinstance(self.mlb_min_root_predictions, int | np.integer) or self.mlb_min_root_predictions < 0:
+            raise TypeError("'mlb_min_root_predictions' must be a non-negative integer.")
+
         if self.feature_extraction not in VALID_FEATURE_EXTRACTION:
             raise TypeError(
                 "'feature_extraction' must be set to one of: {}.".format(

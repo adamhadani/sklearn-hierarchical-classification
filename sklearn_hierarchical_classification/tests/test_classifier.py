@@ -775,3 +775,18 @@ def test_inclusive_training_strategy_requires_mlb():
     clf, (X, y) = make_classifier_and_data(training_strategy="inclusive")
 
     assert_that(calling(clf.fit).with_args(X=X, y=y), raises(TypeError, "inclusive"))
+
+
+def test_mlb_min_root_predictions_guarantees_a_root_label():
+    """With `mlb_min_root_predictions=1`, a sample for which no child of the root clears its threshold
+    still descends into the best-scoring one, so every sample gets at least one top-level label."""
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=np.inf, mlb_min_root_predictions=1)
+
+    clf.fit(X, y)
+    y_pred = clf.predict(X)
+
+    columns = {label: column for column, label in enumerate(mlb.classes_)}
+    roots = y_pred[:, [columns["fruit"], columns["veg"]]]
+    assert_that(roots.sum(axis=1).tolist(), is_(equal_to([1] * len(X))))
+    assert_that(roots[:, 0].tolist(), is_(equal_to([1] * 6 + [0] * 6)))  # best root matches the true one
+    assert_that(int(y_pred.sum()), is_(equal_to(len(X))))  # nothing below the root cleared the threshold

@@ -193,6 +193,11 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         order of `mlb.classes_` (e.g. per-class thresholds tuned on held-out data). Defaults to zero. To obtain the
         scores of every node for such tuning, predict with `mlb_prediction_threshold=-np.inf`, which visits all nodes.
 
+    mlb_min_root_predictions : int
+        For multi-label prediction tasks, the minimum number of children of the root predicted for every sample:
+        when fewer clear their thresholds, the best-scoring children are taken anyway (and descended into), so
+        that no sample is left without a top-level label. Defaults to zero (no such guarantee).
+
     use_decision_function : bool
         Some classifiers (e.g. sklearn.svm.SVC) expose a `.decision_function()` method which would take in the
         feature matrix X and return a set of per-sample scores, corresponding to each label. Setting this to True
@@ -224,6 +229,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         feature_extraction="preprocessed",
         mlb=None,
         mlb_prediction_threshold=0.0,
+        mlb_min_root_predictions=0,
         use_decision_function=False,
     ):
         self.base_estimator = base_estimator
@@ -237,6 +243,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         self.feature_extraction = feature_extraction
         self.mlb = mlb
         self.mlb_prediction_threshold = mlb_prediction_threshold
+        self.mlb_min_root_predictions = mlb_min_root_predictions
         self.use_decision_function = use_decision_function
 
     def __sklearn_tags__(self):
@@ -397,18 +404,33 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         """Accumulate local scores and descend into every child of this node scoring above its threshold."""
         columns = state.columns_of(clf.classes_)
         state.add_scores(rows, columns, scores)
+
+        # Only local classes that are children of this node route samples (an ancestor's or sibling's column
+        # may be among the local classes and is scored, but never followed)
         children = set(self.graph_.successors(node_id))
-        thresholds = self._class_thresholds()
+        local = [local_column for local_column, column in enumerate(columns) if self.mlb.classes_[column] in children]
+        child_scores = scores[:, local]
+        selected = child_scores > self._class_thresholds()[columns[local]]
+        if node_id == self.root:
+            selected |= self._top_children(child_scores, self.mlb_min_root_predictions)
+
         next_nodes = []
-        for local_column, column in enumerate(columns):
-            child = self.mlb.classes_[column]
-            if child not in children:
-                # A local class that is not a child of this node (e.g. an ancestor's column) never routes samples
-                continue
-            selected = rows[scores[:, local_column] > thresholds[column]]
-            if len(selected):
-                next_nodes.append((child, state.record(child, selected)))
+        for k, local_column in enumerate(local):
+            child = self.mlb.classes_[columns[local_column]]
+            if selected[:, k].any():
+                next_nodes.append((child, state.record(child, rows[selected[:, k]])))
         return next_nodes
+
+    @staticmethod
+    def _top_children(child_scores, minimum):
+        """Mask of each sample's `minimum` best-scoring children (all False when `minimum` is 0)."""
+        n_samples, n_children = child_scores.shape
+        top = np.zeros((n_samples, n_children), dtype=bool)
+        k = min(minimum, n_children)
+        if k > 0:
+            best = np.argsort(-child_scores, axis=1)[:, :k]
+            top[np.arange(n_samples)[:, None], best] = True
+        return top
 
     def _class_thresholds(self):
         """One prediction threshold per `mlb.classes_` column."""
