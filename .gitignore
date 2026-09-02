@@ -70,16 +70,16 @@ pip-log.txt
 pip-delete-this-directory.txt
 
 # Unit test / coverage reports
-coverage/
 htmlcov/
 .tox/
 .coverage
 .coverage.*
 .cache
-nosetests.xml
 coverage.xml
 *,cover
-cover
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
 
 # Translations
 *.mo
@@ -98,5 +98,9 @@ target/
 # gh-pages
 public
 
-# pyenv
+# uv / pyenv
 .python-version
+.venv/
+
+# direnv
+.envrc

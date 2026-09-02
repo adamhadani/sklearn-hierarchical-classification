@@ -6,7 +6,9 @@ Demonstrated some of the capabilities, e.g using a Pipeline as the base estimato
 defining a non-trivial class hierarchy, etc.
 
 """
+
 from sklearn import svm
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
@@ -44,11 +46,7 @@ def classify_digits():
     }
     base_estimator = make_pipeline(
         TruncatedSVD(n_components=24),
-        svm.SVC(
-            gamma=0.001,
-            kernel="rbf",
-            probability=True
-        ),
+        CalibratedClassifierCV(svm.SVC(gamma=0.001, kernel="rbf"), ensemble=False),
     )
     clf = HierarchicalClassifier(
         base_estimator=base_estimator,

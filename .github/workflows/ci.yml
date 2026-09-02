@@ -1,0 +1,66 @@
+# Lint (via pre-commit) and test across supported Python versions.
+
+name: CI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ "develop", "master" ]
+  pull_request:
+    branches: [ "develop", "master" ]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+    - name: Install uv and set the python version
+      uses: astral-sh/setup-uv@v10.0.1
+      with:
+        python-version: "3.13"
+        version: "latest"
+        enable-cache: true
+    - name: Install the project
+      run: uv sync --dev
+    - name: Cache pre-commit hook environments
+      uses: actions/cache@v5
+      with:
+        path: ~/.cache/pre-commit
+        key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
+    # Runs the full .pre-commit-config.yaml (ruff, mypy and the hygiene hooks)
+    # so CI enforces exactly what pre-commit does locally and a
+    # `git commit --no-verify` cannot slip past it. pytest is skipped here
+    # because the test matrix below covers it across every Python version.
+    - name: Run pre-commit hooks
+      run: uv run pre-commit run --all-files --show-diff-on-failure
+      env:
+        SKIP: pytest
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    name: test (${{ matrix.python-version }})
+    steps:
+    - uses: actions/checkout@v7
+    - name: Install uv and set the python version
+      uses: astral-sh/setup-uv@v10.0.1
+      with:
+        python-version: ${{ matrix.python-version }}
+        version: "latest"
+        enable-cache: true
+    - name: Install the project
+      run: uv sync --dev
+    - name: Cache scikit-learn datasets
+      uses: actions/cache@v5
+      with:
+        path: ~/scikit_learn_data
+        key: scikit-learn-data-20newsgroups
+    - name: Run tests
+      run: uv run pytest --cov --cov-branch --cov-report=term-missing

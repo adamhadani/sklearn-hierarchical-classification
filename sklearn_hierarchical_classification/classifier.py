@@ -2,6 +2,7 @@
 Hierarchical classifier interface.
 
 """
+
 import numpy as np
 from networkx import DiGraph, is_tree
 from scipy.sparse import csr_matrix
@@ -14,12 +15,7 @@ from sklearn.base import (
 from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
 from sklearn.utils.multiclass import check_classification_targets
-from sklearn.utils.validation import (
-    check_array,
-    check_consistent_length,
-    check_is_fitted,
-    check_X_y,
-)
+from sklearn.utils.validation import check_array, check_is_fitted, validate_data
 
 from sklearn_hierarchical_classification.array import (
     apply_along_rows,
@@ -42,7 +38,7 @@ from sklearn_hierarchical_classification.validation import is_estimator, validat
 
 
 @logger
-class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin):
+class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator):
     """Hierarchical classification strategy
 
     Hierarchical classification deals with the scenario where our target classes have
@@ -177,7 +173,7 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
         progress_wrapper=None,
         feature_extraction="preprocessed",
         mlb=None,
-        mlb_prediction_threshold=0.,
+        mlb_prediction_threshold=0.0,
         use_decision_function=False,
     ):
         self.base_estimator = base_estimator
@@ -193,7 +189,12 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
         self.mlb_prediction_threshold = mlb_prediction_threshold
         self.use_decision_function = use_decision_function
 
-    def fit(self, X, y=None, sample_weight=None):
+    def __sklearn_tags__(self):
+        tags = super().__sklearn_tags__()
+        tags.input_tags.sparse = True
+        return tags
+
+    def fit(self, X, y=None):
         """Fit underlying classifiers.
 
         Parameters
@@ -202,11 +203,9 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
             Data.
 
         y : (sparse) array-like, shape = [n_samples, ], [n_samples, n_classes]
-            Multi-class targets. An indicator matrix turns on multilabel
-            classification.
-
-        sample_weight : array-like, shape (n_samples,), optional (default=None)
-            Weights applied to individual samples (1. for unweighted).
+            Multi-class targets. A binary indicator matrix (as produced by the `MultiLabelBinarizer`
+            passed as `mlb`) turns on multi-label classification; this is only supported together
+            with `feature_extraction="raw"`.
 
         Returns
         -------
@@ -221,18 +220,16 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
             y = check_array(
                 y,
                 accept_sparse="csr",
-                force_all_finite=True,
+                ensure_all_finite=True,
                 ensure_2d=False,
                 dtype=None,
             )
             if len(X) != y.shape[0]:
                 raise ValueError("bad input shape: len(X) != y.shape[0]")
         else:
-            X, y = check_X_y(X, y, accept_sparse="csr")
+            X, y = validate_data(self, X, y, accept_sparse="csr")
 
         check_classification_targets(y)
-        if sample_weight is not None:
-            check_consistent_length(y, sample_weight)
 
         # Check that parameter assignment is consistent
         self._check_parameters()
@@ -241,11 +238,7 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
         self.class_hierarchy_ = self.class_hierarchy or make_flat_hierarchy(list(np.unique(y)), root=self.root)
         self.graph_ = DiGraph(self.class_hierarchy_)
         self.is_tree_ = is_tree(self.graph_)
-        self.classes_ = list(
-            node
-            for node in self.graph_.nodes()
-            if node != self.root
-        )
+        self.classes_ = [node for node in self.graph_.nodes() if node != self.root]
 
         if self.feature_extraction == "preprocessed":
             # When not in raw mode, recursively build training feature sets for each node in graph
@@ -282,12 +275,9 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
                 return path[-1]
 
         if self.feature_extraction == "raw":
-            return np.array([
-                _classify(X[i])
-                for i in range(len(X))
-            ])
+            return np.array([_classify(X[i]) for i in range(len(X))])
         else:
-            X = check_array(X, accept_sparse="csr")
+            X = validate_data(self, X, accept_sparse="csr", reset=False)
 
         y_pred = apply_along_rows(_classify, X=X)
         return y_pred
@@ -314,12 +304,9 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
             return scores
 
         if self.feature_extraction == "raw":
-            return np.array([
-                _classify(X[i])
-                for i in range(len(X))
-            ])
+            return np.array([_classify(X[i]) for i in range(len(X))])
         else:
-            X = check_array(X, accept_sparse="csr")
+            X = validate_data(self, X, accept_sparse="csr", reset=False)
 
         y_pred = apply_along_rows(_classify, X=X)
         return y_pred
@@ -361,22 +348,15 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
             return self.graph_.nodes[node_id]["X"]
 
         # Non-leaf node
-        if self.feature_extraction == "raw":
-            self.graph_.nodes[node_id]["X"] = []
-        else:
-            self.graph_.nodes[node_id]["X"] = csr_matrix(
-                X.shape,
-                dtype=X.dtype,
-            )
+        self.graph_.nodes[node_id]["X"] = csr_matrix(X.shape, dtype=X.dtype)
 
         for child_node_id in self.graph_.successors(node_id):
-            self.graph_.nodes[node_id]["X"] += \
-                self._recursive_build_features(
-                    X=X,
-                    y=y,
-                    node_id=child_node_id,
-                    progress=progress,
-                )
+            self.graph_.nodes[node_id]["X"] += self._recursive_build_features(
+                X=X,
+                y=y,
+                node_id=child_node_id,
+                progress=progress,
+            )
 
         # Build and store metafeatures for node
         self.graph_.nodes[node_id][METAFEATURES] = self._build_metafeatures(
@@ -400,10 +380,7 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
         return X_out
 
     def _build_features(self, X, y, indices):
-        if self.feature_extraction == "raw":
-            X_ = [X[ix] for ix in indices]
-        else:
-            X_ = extract_rows_csr(X, indices)
+        X_ = extract_rows_csr(X, indices)
 
         # Perform feature selection
         X_ = self._select_features(X=X_, y=np.array(y)[indices])
@@ -440,22 +417,13 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
             * "n_targets" - Number of targets (classes) to classify into at given node.
 
         """
-        if self.feature_extraction == "raw":
-            # In raw mode, we do not know which training examples are "zeroed out" for which node
-            # since we do not recursively build features until the recursive training phase which comes afterwards.
-            # Therefore, the number of targets is simply the number of unique labels in y
-            return dict(
-                n_samples=len(X),
-                n_targets=len(np.unique(y)),
-            )
-
         # Indices of non-zero rows in X, i.e rows corresponding to relevant samples for this node.
         ix = nnz_rows_ix(X)
 
-        return dict(
-            n_samples=len(ix),
-            n_targets=len(np.unique(y[ix])),
-        )
+        return {
+            "n_samples": len(ix),
+            "n_targets": len(np.unique(y[ix])),
+        }
 
     def _recursive_train_local_classifiers(self, X, y, node_id, progress):
         if CLASSIFIER in self.graph_.nodes[node_id]:
@@ -474,15 +442,13 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
             )
 
     def _train_local_classifier(self, X, y, node_id):
-        if self.graph_.out_degree(node_id) == 0:
-            # Leaf node
-            if self.algorithm == "lcpn":
-                # Leaf nodes do not get a classifier assigned in LCPN algorithm mode.
-                self.logger.debug(
-                    "_train_local_classifier() - skipping leaf node %s when algorithm is 'lcpn'",
-                    node_id,
-                )
-                return
+        if self.graph_.out_degree(node_id) == 0 and self.algorithm == "lcpn":
+            # Leaf nodes do not get a classifier assigned in LCPN algorithm mode.
+            self.logger.debug(
+                "_train_local_classifier() - skipping leaf node %s when algorithm is 'lcpn'",
+                node_id,
+            )
+            return
 
         if self.feature_extraction == "raw":
             X_ = X
@@ -495,11 +461,17 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
             Xl = X_.shape
 
         y_rolled_up = rollup_nodes(
-            graph=self.graph_,
-            source=node_id,
-            targets=[y[idx] for idx in nnz_rows],
-            mlb=self.mlb
+            graph=self.graph_, source=node_id, targets=[y[idx] for idx in nnz_rows], mlb=self.mlb
         )
+
+        # Drop samples whose target does not lie below the current node (e.g. samples labeled with the node
+        # itself, or with a node in another branch, which is the common case in "raw" mode where X_ is the
+        # entire training set). They carry no signal for choosing among this node's children, and keeping
+        # them would misalign X_ and the flattened y_ below.
+        keep = [i for i, labels in enumerate(y_rolled_up) if labels]
+        if len(keep) < len(y_rolled_up):
+            X_ = [X_[i] for i in keep] if self.feature_extraction == "raw" else X_[keep, :]
+            y_rolled_up = [y_rolled_up[i] for i in keep]
 
         if self.is_tree_:
             if self.mlb is None:
@@ -509,10 +481,7 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
                 # take all non zero, only compare in side the siblings
                 idx = np.where(y_.sum(1) > 0)[0]
                 y_ = y_[idx, :]
-                if self.feature_extraction == "raw":
-                    X_ = [X_[tk] for tk in idx]
-                else:
-                    X_ = X_[idx, :]
+                X_ = [X_[tk] for tk in idx] if self.feature_extraction == "raw" else X_[idx, :]
         else:
             # Class hierarchy graph is a DAG
             if self.feature_extraction == "raw":
@@ -530,7 +499,8 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
             num_targets,
         )
 
-        if self.feature_extraction == "preprocessed" and X_.shape[0] == 0:
+        n_samples = len(X_) if self.feature_extraction == "raw" else X_.shape[0]
+        if n_samples == 0:
             # No training data could be materialized for current node
             # TODO: support a "strict" mode flag to explicitly enable/disable fallback logic here?
             self.logger.warning(
@@ -548,29 +518,33 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
                 constant,
             )
 
-            clf = DummyClassifier(strategy="constant", constant=constant)
+            # Nb. wrap as a 1-element array-like: DummyClassifier's parameter validation rejects numpy scalars
+            clf = DummyClassifier(strategy="constant", constant=[constant])
         else:
             clf = self._base_estimator_for(node_id)
 
-        if self.feature_extraction == "raw":
-            if len(X_) > 0:
-                clf.fit(X=X_, y=y_)
-                self.logger.debug(
-                    "_train_local_classifier() - training node %s ",  # noqa:E501
-                    node_id,
-                )
-                self.graph_.nodes[node_id][CLASSIFIER] = clf
-            else:
-                self.logger.debug(
-                    "_train_local_classifier() - could not train  node %s ",  # noqa:E501
-                    node_id,
-                )
+        clf.fit(X=X_, y=y_)
+        self.graph_.nodes[node_id][CLASSIFIER] = clf
 
-        else:
-            clf.fit(X=X_, y=y_)
-            self.graph_.nodes[node_id][CLASSIFIER] = clf
+    def _local_scores(self, clf, x):
+        """
+        Score a single sample with the local classifier at a node.
 
-    def _recursive_predict(self, x, root):  # noqa:C901 TODO: refactor
+        Returns a 1-D array of per-class scores aligned with ``clf.classes_``, regardless of
+        feature extraction mode (a raw sample is wrapped as a length-1 batch) and of whether
+        scores come from ``decision_function`` or ``predict_proba``.
+
+        """
+        x_ = [x] if self.feature_extraction == "raw" else x
+        if self.use_decision_function and hasattr(clf, "decision_function"):
+            scores = np.asarray(clf.decision_function(x_)).reshape(-1)
+            if len(clf.classes_) == 2 and scores.shape[0] == 1:
+                # A binary decision_function returns a single signed score for classes_[1]
+                scores = np.array([-scores[0], scores[0]])
+            return scores
+        return np.asarray(clf.predict_proba(x_)).reshape(-1)
+
+    def _recursive_predict(self, x, root):
         if CLASSIFIER not in self.graph_.nodes[root]:
             return None, None
 
@@ -580,20 +554,9 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
         class_proba = np.zeros_like(self.classes_, dtype=np.float64)
 
         while clf:
-            if self.use_decision_function and hasattr(clf, "decision_function"):
-                if self.feature_extraction == "raw":
-                    probs = clf.decision_function([x])
-                    argmax = np.argmax(probs)
-                    score = probs[0, argmax]
-
-                else:
-                    probs = clf.decision_function(x)
-                    argmax = np.argmax(probs)
-                    score = probs[argmax]
-            else:
-                probs = clf.predict_proba(x)[0]
-                argmax = np.argmax(probs)
-                score = probs[argmax]
+            probs = self._local_scores(clf, x)
+            argmax = np.argmax(probs)
+            score = probs[argmax]
 
             path_proba.append(score)
             if self.mlb is not None:
@@ -607,7 +570,7 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
                 if self.mlb:
                     # when we have a multi-label binarizer
                     class_idx = class_
-                    class_proba[class_idx] = probs[0, local_class_idx]
+                    class_proba[class_idx] = probs[local_class_idx]
                     if class_proba[class_idx] > self.mlb_prediction_threshold:
                         predictions.append(self.mlb.classes_[class_])
                 else:
@@ -623,14 +586,9 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
                             path,
                         )
                         raise
-                    if len(probs.shape) > 1 and probs.shape[0] == 1:
-                        class_proba[class_idx] = probs[0, local_class_idx]
-                        if local_class_idx == argmax:
-                            prediction = class_
-                    else:
-                        class_proba[class_idx] = probs[local_class_idx]
-                        if local_class_idx == argmax:
-                            prediction = class_
+                    class_proba[class_idx] = probs[local_class_idx]
+                    if local_class_idx == argmax:
+                        prediction = class_
 
             if self.mlb is None:
                 if self._should_early_terminate(
@@ -666,10 +624,7 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
             # Prediction depth parameter does not allow for early termination
             return False
 
-        if (
-            isinstance(self.stopping_criteria, float)
-            and score < self.stopping_criteria
-        ):
+        if isinstance(self.stopping_criteria, float) and score < self.stopping_criteria:
             if current_node == self.root:
                 return False
 
@@ -717,7 +672,6 @@ class HierarchicalClassifier(BaseEstimator, ClassifierMixin, MetaEstimatorMixin)
         return LogisticRegression(
             solver="lbfgs",
             max_iter=1000,
-            multi_class="multinomial",
         )
 
     def _progress(self, total, desc, **kwargs):

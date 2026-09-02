@@ -1,0 +1,89 @@
+# Build on every push to the main branches; publish to PyPI (trusted publishing)
+# and cut a GitHub Release only when a version tag of the form `X.Y.Z` (e.g.
+# `1.4.0`, no `v` prefix) is pushed. The package version is derived from the tag
+# by setuptools-scm, so nothing needs bumping in-tree. Other tags are ignored so a
+# stray tag can never publish a bogus version.
+
+name: Publish to PyPI
+
+permissions:
+  contents: read
+
+on:
+  push:
+    branches: [ "develop", "master" ]
+    tags: [ "[0-9]+.[0-9]+.[0-9]+" ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0  # setuptools-scm needs the full tag history
+        persist-credentials: false
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10.0.1
+      with:
+        python-version: "3.13"
+        version: "latest"
+    - name: Build a binary wheel and a source tarball
+      run: uv build
+    - name: Check the built distributions
+      run: uvx twine check dist/*
+    - name: Store the distribution packages
+      uses: actions/upload-artifact@v7
+      with:
+        name: python-package-distributions
+        path: dist/
+
+  publish-to-pypi:
+    name: Publish Python distribution to PyPI
+    if: startsWith(github.ref, 'refs/tags/')
+    needs:
+      - build
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/sklearn-hierarchical-classification
+    permissions:
+      id-token: write  # mandatory for trusted publishing
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v8
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Publish distribution to PyPI
+      uses: pypa/gh-action-pypi-publish@release/v1
+      with:
+        verbose: true
+
+  github-release:
+    name: Create GitHub Release with the built distributions
+    needs:
+      - publish-to-pypi
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write  # mandatory for making GitHub Releases
+    steps:
+    - name: Download all the dists
+      uses: actions/download-artifact@v8
+      with:
+        name: python-package-distributions
+        path: dist/
+    - name: Create GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: >-
+        gh release create
+        "$GITHUB_REF_NAME"
+        --repo "$GITHUB_REPOSITORY"
+        --generate-notes
+    - name: Upload distributions to GitHub Release
+      env:
+        GITHUB_TOKEN: ${{ github.token }}
+      run: >-
+        gh release upload
+        "$GITHUB_REF_NAME" dist/**
+        --repo "$GITHUB_REPOSITORY"

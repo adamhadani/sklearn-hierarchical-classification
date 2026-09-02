@@ -1,0 +1,56 @@
+fail_fast: true
+repos:
+- repo: https://github.com/pre-commit/pre-commit-hooks
+  rev: v6.0.0
+  hooks:
+    - id: check-added-large-files
+      args: [ --maxkb=1000 ]
+    - id: fix-byte-order-marker
+    - id: check-case-conflict
+    - id: check-json
+    - id: check-toml
+    - id: check-yaml
+      args: [ --unsafe ]
+    - id: check-merge-conflict
+    - id: check-shebang-scripts-are-executable
+    - id: mixed-line-ending
+      args: [ --fix=lf ]
+    - id: detect-private-key
+    - id: end-of-file-fixer
+    - id: trailing-whitespace
+# Keeps uv.lock in sync with pyproject.toml, so a dependency edit cannot be
+# committed without the corresponding lockfile update.
+- repo: https://github.com/astral-sh/uv-pre-commit
+  rev: 0.12.9
+  hooks:
+    - id: uv-lock
+- repo: local
+  hooks:
+  # Ruff, mypy and pytest all run out of the dev dependency group resolved in
+  # uv.lock. CI runs the same `uv run ...` commands via pre-commit, so the
+  # versions enforced locally and in CI cannot drift apart. Bump them with
+  # `uv lock --upgrade` -- there is no separate hook rev to update.
+  - id: ruff-check
+    name: ruff check
+    entry: uv run ruff check --force-exclude --fix
+    language: system
+    types_or: [python, pyi]
+    require_serial: true
+  - id: ruff-format
+    name: ruff format
+    entry: uv run ruff format --force-exclude
+    language: system
+    types_or: [python, pyi]
+    require_serial: true
+  - id: mypy
+    name: mypy
+    entry: bash -ec "uv run mypy sklearn_hierarchical_classification"
+    language: system
+    types: [python]
+    pass_filenames: false
+  - id: pytest
+    name: pytest [with coverage, without slow]
+    entry: bash -ec "uv run python -m pytest --cov --cov-branch -m 'not slow'"
+    language: system
+    types: [python]
+    pass_filenames: false

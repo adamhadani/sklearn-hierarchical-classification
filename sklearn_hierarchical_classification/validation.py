@@ -1,4 +1,5 @@
 """Validation helpers."""
+
 from sklearn_hierarchical_classification.constants import (
     VALID_ALGORITHM,
     VALID_FEATURE_EXTRACTION,
@@ -7,8 +8,9 @@ from sklearn_hierarchical_classification.constants import (
 )
 
 
-class ParameterValidator(object):
+class ParameterValidator:
     """Parameter validation logic for the HierarchicalClassifier class."""
+
     def __init__(self, instance):
         self.instance = instance
 
@@ -54,13 +56,13 @@ class ParameterValidator(object):
                 when prediction_depth is not set to "nmlnp"."""
             )
 
-        if self.stopping_criteria and not any((
-            isinstance(self.stopping_criteria, float),
-            callable(self.stopping_criteria),
-        )):
-            raise TypeError(
-                """'stopping_criteria' must be set to a float or a callable."""
+        if self.stopping_criteria and not any(
+            (
+                isinstance(self.stopping_criteria, float),
+                callable(self.stopping_criteria),
             )
+        ):
+            raise TypeError("""'stopping_criteria' must be set to a float or a callable.""")
 
         if self.feature_extraction not in VALID_FEATURE_EXTRACTION:
             raise TypeError(

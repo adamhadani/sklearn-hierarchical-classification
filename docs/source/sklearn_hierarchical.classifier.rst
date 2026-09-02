@@ -8,4 +8,3 @@
     :template: class.rst
 
     classifier.HierarchicalClassifier
-
