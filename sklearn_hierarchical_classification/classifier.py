@@ -3,10 +3,8 @@ Hierarchical classifier interface.
 
 """
 
-from itertools import chain
-
 import numpy as np
-from networkx import DiGraph, descendants, is_tree
+from networkx import DiGraph, dfs_preorder_nodes
 from scipy.sparse import issparse
 from sklearn.base import (
     BaseEstimator,
@@ -19,12 +17,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_array, check_is_fitted, validate_data
 
-from sklearn_hierarchical_classification.array import (
-    apply_along_rows,
-    apply_rollup_Xy,
-    apply_rollup_Xy_raw,
-    nnz_columns_count,
-)
+from sklearn_hierarchical_classification.array import apply_along_rows, flatten_list, nnz_columns_count
 from sklearn_hierarchical_classification.constants import (
     CLASSIFIER,
     DEFAULT,
@@ -33,16 +26,23 @@ from sklearn_hierarchical_classification.constants import (
 )
 from sklearn_hierarchical_classification.decorators import logger
 from sklearn_hierarchical_classification.dummy import DummyProgress
-from sklearn_hierarchical_classification.graph import make_flat_hierarchy, rollup_nodes
+from sklearn_hierarchical_classification.graph import children_by_descendant, make_flat_hierarchy, rollup_targets
 from sklearn_hierarchical_classification.validation import is_estimator, validate_parameters
 
 
-def _rows_by_label(y):
-    """Map each distinct label in `y` to the sorted array of row indices carrying it."""
+def _rows_by_label(y, columns=None):
+    """
+    Map each label to the sorted row indices carrying it.
+
+    `y` is either 1-D (one label per row) or, when `columns` names its columns, a 2-D binary
+    indicator matrix (one group per column, keyed by that column's label).
+
+    """
+    if columns is not None:
+        return {label: np.flatnonzero(y[:, column]) for column, label in enumerate(columns)}
     order = np.argsort(y, kind="stable")
     labels, starts = np.unique(y[order], return_index=True)
-    bounds = np.append(starts, len(order))
-    return {label: np.sort(order[start:end]) for label, start, end in zip(labels, bounds[:-1], bounds[1:], strict=True)}
+    return dict(zip(labels, np.split(order, starts[1:]), strict=True))
 
 
 @logger
@@ -234,6 +234,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             )
             if len(X) != y.shape[0]:
                 raise ValueError("bad input shape: len(X) != y.shape[0]")
+            if issparse(y):
+                y = y.toarray()
         else:
             X, y = validate_data(self, X, y, accept_sparse="csr")
 
@@ -245,7 +247,6 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         # Initialize NetworkX Graph from input class hierarchy
         self.class_hierarchy_ = self.class_hierarchy or make_flat_hierarchy(list(np.unique(y)), root=self.root)
         self.graph_ = DiGraph(self.class_hierarchy_)
-        self.is_tree_ = is_tree(self.graph_)
         self.classes_ = [node for node in self.graph_.nodes() if node != self.root]
 
         with self._progress(total=self.graph_.number_of_nodes(), desc="Training local classifiers") as progress:
@@ -321,31 +322,36 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         """Check the parameter assignment is valid and internally consistent."""
         validate_parameters(self)
 
+    def _n_samples(self, X):
+        return len(X) if self.feature_extraction == "raw" else X.shape[0]
+
+    def _rows(self, X, idx):
+        """Select rows of `X` by index, whether `X` is a feature matrix or a raw sample sequence."""
+        if self.feature_extraction == "raw":
+            return [X[i] for i in idx]
+        return X[idx]
+
     def _train_local_classifiers(self, X, y, progress):
-        """Train the local classifier at every node reachable from the root.
+        """Train the local classifier at every node, in depth-first order from the root.
 
         Each node's training set is the set of samples labeled with a strict descendant of that node
         (samples labeled with the node itself belong to its parent's training set). Those samples are
         selected by index directly from `X`, so no per-node copy of the feature matrix is ever built.
 
         """
-        rows_by_label = None if self.mlb is not None else _rows_by_label(y)
-        for node_id in chain([self.root], descendants(self.graph_, self.root)):
+        columns = self.mlb.classes_ if self.mlb is not None else None
+        rows_by_label = _rows_by_label(y, columns=columns)
+        for node_id in dfs_preorder_nodes(self.graph_, self.root):
             progress.update(1)
-            self._train_local_classifier(X, y, node_id, rows_by_label=rows_by_label)
+            self._train_local_classifier(X, y, node_id, rows_by_label)
 
-    def _training_rows(self, y, node_id, rows_by_label):
-        """Sorted indices of the samples labeled with a strict descendant of `node_id`."""
-        below = descendants(self.graph_, node_id)
-        if self.mlb is None:
-            groups = [rows_by_label[label] for label in below if label in rows_by_label]
-            return np.sort(np.concatenate(groups)) if groups else np.empty(0, dtype=np.intp)
-
-        # Multi-label: y is a binary indicator matrix whose columns follow mlb.classes_
-        columns = [column for column, label in enumerate(self.mlb.classes_) if label in below]
-        if not columns:
+    @staticmethod
+    def _training_rows(rows_by_label, below):
+        """Sorted, de-duplicated indices of the samples labeled with any node in `below`."""
+        groups = [rows_by_label[label] for label in below if label in rows_by_label]
+        if not groups:
             return np.empty(0, dtype=np.intp)
-        return np.flatnonzero(np.asarray(y[:, columns].sum(axis=1)).ravel() > 0)
+        return np.unique(np.concatenate(groups))
 
     def _select_features(self, X, y):
         """
@@ -354,7 +360,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         Called once per trained node with that node's training samples `X` (a row subset of the
         training data, in the same format it was passed to `fit`) and their original targets `y`.
         Can be overridden by a sub-class to implement feature selection logic; the default is the
-        identity.
+        identity. Nb. prediction passes unselected rows to the local classifiers, so an override
+        must keep the number of columns (e.g. zero out unselected features rather than drop them).
 
         """
         return X
@@ -393,14 +400,15 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             )
             return
 
-        rows = self._training_rows(y, node_id, rows_by_label)
+        child_of = children_by_descendant(self.graph_, node_id)
+        rows = self._training_rows(rows_by_label, below=child_of)
         y_rows = y[rows]
-        if self.mlb is not None and issparse(y_rows):
-            y_rows = y_rows.toarray()
         if not is_leaf:
             self.graph_.nodes[node_id][METAFEATURES] = self._build_metafeatures(y_rows)
 
-        if len(rows) == 0:
+        X_ = self._select_features(X=self._rows(X, rows), y=y_rows)
+        X_, y_ = self._roll_up(X_, y_rows, child_of)
+        if self._n_samples(X_) == 0:
             # No training data could be materialized for current node
             # TODO: support a "strict" mode flag to explicitly enable/disable fallback logic here?
             self.logger.warning(
@@ -409,44 +417,62 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             )
             return
 
-        X_ = [X[i] for i in rows] if self.feature_extraction == "raw" else X[rows]
-        X_ = self._select_features(X=X_, y=y_rows)
-
-        # Roll every sample's target up to the child (or children, on a DAG) of this node it lies under
-        y_rolled_up = rollup_nodes(graph=self.graph_, source=node_id, targets=y_rows, mlb=self.mlb)
-        if self.mlb is not None:
-            y_ = self.mlb.transform(y_rolled_up)
-        elif self.feature_extraction == "raw":
-            X_, y_ = apply_rollup_Xy_raw(X_, y_rolled_up)
-        else:
-            X_, y_ = apply_rollup_Xy(X_, y_rolled_up)
-
-        num_targets = len(np.unique(y_))
+        clf = self._local_classifier_for(node_id, y_)
         self.logger.debug(
-            "_train_local_classifier() - Training local classifier for node: %s, n_samples: %s, len(y): %s, n_targets: %s",  # noqa:E501
+            "_train_local_classifier() - training %s at node %s on %s samples",
+            type(clf).__name__,
             node_id,
-            len(rows),
             len(y_),
-            num_targets,
         )
+        clf.fit(X=X_, y=y_)
+        self.graph_.nodes[node_id][CLASSIFIER] = clf
 
-        if num_targets == 1:
-            # Training data could be materialized for only a single target at current node
+    def _roll_up(self, X_, y_rows, child_of):
+        """
+        Turn each sample's target into the child (or children) of the current node it lies under.
+
+        Returns the training data and targets for the node's local classifier: on a DAG a sample
+        under several children is repeated once per child, so `X_` may grow.
+
+        """
+        if self.mlb is not None:
+            return self._roll_up_multi_label(X_, y_rows, child_of)
+        return self._roll_up_single_label(X_, y_rows, child_of)
+
+    def _roll_up_single_label(self, X_, y_rows, child_of):
+        labels, inverse = np.unique(y_rows, return_inverse=True)
+        children = [child_of[label] for label in labels]
+        if all(len(nodes) == 1 for nodes in children):
+            # Every target lies under exactly one child (always the case on a tree): no expansion needed
+            return X_, np.asarray([nodes[0] for nodes in children])[inverse]
+
+        counts = np.fromiter((len(nodes) for nodes in children), dtype=np.intp)[inverse]
+        positions = np.repeat(np.arange(len(y_rows)), counts)
+        return self._rows(X_, positions), np.asarray(flatten_list(children[k] for k in inverse))
+
+    def _roll_up_multi_label(self, X_, y_rows, child_of):
+        y_ = self.mlb.transform(rollup_targets(child_of, y_rows, mlb=self.mlb))
+        if issparse(y_):
+            y_ = y_.toarray()
+        # Drop samples whose rolled-up children are unknown to the binarizer (all-zero rows)
+        keep = np.flatnonzero(y_.sum(axis=1) > 0)
+        if len(keep) < y_.shape[0]:
+            return self._rows(X_, keep), y_[keep]
+        return X_, y_
+
+    def _local_classifier_for(self, node_id, y_):
+        """The estimator to fit at a node: the base estimator, or a constant predictor when the
+        (single-label) training targets hold a single child."""
+        if self.mlb is None and len(np.unique(y_)) == 1:
             # TODO: support a "strict" mode flag to explicitly enable/disable fallback logic here?
-            constant = y_[0]
             self.logger.debug(
                 "_train_local_classifier() - only a single target (child node) available to train classifier for node %s, Will trivially predict %s",  # noqa:E501
                 node_id,
-                constant,
+                y_[0],
             )
-
             # Nb. wrap as a 1-element array-like: DummyClassifier's parameter validation rejects numpy scalars
-            clf = DummyClassifier(strategy="constant", constant=[constant])
-        else:
-            clf = self._base_estimator_for(node_id)
-
-        clf.fit(X=X_, y=y_)
-        self.graph_.nodes[node_id][CLASSIFIER] = clf
+            return DummyClassifier(strategy="constant", constant=[y_[0]])
+        return self._base_estimator_for(node_id)
 
     def _local_scores(self, clf, x):
         """

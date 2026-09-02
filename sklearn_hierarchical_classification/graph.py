@@ -7,7 +7,6 @@ from collections import defaultdict
 from itertools import chain
 
 from networkx import descendants
-from numpy import ndarray
 
 
 def make_flat_hierarchy(targets, root):
@@ -30,18 +29,14 @@ def rollup_nodes(graph, source, targets, mlb=None):
     is the concatenation of the roll-ups of every label set in it.
 
     """
-    child_of = children_by_descendant(graph, source)
-    resultset = []
-    for node_id in targets:
-        if mlb is not None and isinstance(node_id, ndarray):
-            result_row = []
-            for label in node_id.nonzero()[0]:
-                result_row.extend(child_of.get(mlb.classes_[label], ()))
-            resultset.append(result_row)
-        else:
-            resultset.append(list(child_of.get(node_id, ())))
+    return rollup_targets(children_by_descendant(graph, source), targets, mlb=mlb)
 
-    return resultset
+
+def rollup_targets(child_of, targets, mlb=None):
+    """Roll `targets` up through a precomputed descendant -> children map (see `rollup_nodes`)."""
+    if mlb is None:
+        return [list(child_of.get(target, ())) for target in targets]
+    return [[child for label in row.nonzero()[0] for child in child_of.get(mlb.classes_[label], ())] for row in targets]
 
 
 def children_by_descendant(graph, source):

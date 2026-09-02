@@ -81,6 +81,14 @@ clf = HierarchicalClassifier(
 - Python 3.11+ and scikit-learn 1.6+ are required.
 - `HierarchicalClassifier.fit()` no longer accepts `sample_weight`. It was accepted but never used
   (weights were silently ignored), which current scikit-learn estimator checks reject.
+- A node's training set is now selected by label only. Previously a sample whose feature row was
+  entirely zero was silently left out of every local classifier (and of the `n_samples` metafeature).
+- On a DAG, a sample under several children of a node is now used once per child (previously once per
+  *path*, which duplicated rows and, in the feature-building step, doubled feature values).
+- `_select_features(X, y)` is called once per trained node with that node's rows, and must keep the
+  number of columns since prediction passes unselected rows to the local classifiers.
+- The `array` helpers `extract_rows_csr`, `nnz_rows_ix`, `apply_rollup_Xy` and `apply_rollup_Xy_raw`
+  were internal to the old per-node matrix building and have been removed.
 - The default base estimator is `LogisticRegression(solver="lbfgs")` without the removed
   `multi_class="multinomial"` argument. On scikit-learn 1.6/1.7 this means binary local classifiers use
   one-vs-rest, so predicted probabilities (and hence `nmlnp` stopping decisions) can differ slightly
