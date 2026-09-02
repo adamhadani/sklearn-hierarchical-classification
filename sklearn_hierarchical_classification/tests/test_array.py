@@ -2,7 +2,12 @@ import numpy as np
 from hamcrest import assert_that, equal_to, is_
 from scipy.sparse import coo_matrix, csr_array
 
-from sklearn_hierarchical_classification.array import apply_along_rows, apply_rollup_Xy, apply_rollup_Xy_raw
+from sklearn_hierarchical_classification.array import (
+    apply_along_rows,
+    apply_rollup_Xy,
+    apply_rollup_Xy_raw,
+    nnz_columns_count,
+)
 
 
 def test_apply_rollup_xy():
@@ -62,3 +67,9 @@ def test_apply_rollup_xy_all_empty():
 
     assert_that(X_.shape, is_(equal_to((0, 2))))
     assert_that(y_, is_(equal_to([])))
+
+
+def test_nnz_columns_count():
+    X = np.array([[1, 0, 0, 0], [0, 0, 2, 0]])
+
+    assert_that(nnz_columns_count(X), is_(equal_to(2)))
