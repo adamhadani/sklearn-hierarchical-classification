@@ -8,8 +8,8 @@ permissions:
 on:
   push:
     branches: [ "develop", "master" ]
+  # Every pull request, whatever its base, so stacked PRs are checked too
   pull_request:
-    branches: [ "develop", "master" ]
 
 jobs:
   lint:
