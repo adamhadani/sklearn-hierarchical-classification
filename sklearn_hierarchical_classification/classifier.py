@@ -145,8 +145,12 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
     training_strategy: "exclusive", "less_exclusive", "inclusive", "less_inclusive",
                        "siblings", "exclusive_siblings", or None.
-        This parameter is used when the "algorithm" parameter is to set to "lcn", and dictates how training data
-        is constructed for training the binary classifier at each node.
+        Dictates how the training set of each local classifier is constructed (terminology per [1]).
+        With "lcpn" (the default algorithm) the choice is between "siblings" (the default when None: a node's
+        classifier is trained on the documents of its subtree only, so it learns to tell the children apart)
+        and "inclusive" (documents from outside the subtree are added as negatives for every child, so the
+        classifier's scores are also calibrated for documents that a parent may route to it by mistake;
+        requires `mlb`). The full set of values is reserved for the "lcn" algorithm.
 
     stopping_criteria: function, float, or None.
         This parameter is used when the "prediction_depth" parameter is set to "nmlnp", and is used to evaluate
@@ -552,11 +556,13 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             return
 
         child_of = children_by_descendant(self.graph_, node_id)
-        rows = self._training_rows(rows_by_label, below=child_of)
-        y_rows = y[rows]
+        subtree_rows = self._training_rows(rows_by_label, below=child_of)
         if not is_leaf:
-            self.graph_.nodes[node_id][METAFEATURES] = self._build_metafeatures(y_rows)
+            self.graph_.nodes[node_id][METAFEATURES] = self._build_metafeatures(y[subtree_rows])
 
+        # "inclusive": every other document joins the training set as a negative for all children
+        rows = np.arange(y.shape[0]) if self._is_inclusive and len(subtree_rows) else subtree_rows
+        y_rows = y[rows]
         X_ = self._select_features(X=self._rows(X, rows), y=y_rows)
         X_, y_ = self._roll_up(X_, y_rows, child_of)
         if self._n_samples(X_) == 0:
@@ -616,11 +622,18 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         y_ = self.mlb.transform(rollup_targets(child_of, y_rows, mlb=self.mlb))
         if issparse(y_):
             y_ = y_.toarray()
+        if self._is_inclusive:
+            # All-zero rows are the out-of-subtree negatives this strategy is about
+            return X_, y_
         # Drop samples whose rolled-up children are unknown to the binarizer (all-zero rows)
         keep = np.flatnonzero(y_.sum(axis=1) > 0)
         if len(keep) < y_.shape[0]:
             return self._rows(X_, keep), y_[keep]
         return X_, y_
+
+    @property
+    def _is_inclusive(self):
+        return self.training_strategy == "inclusive"
 
     def _local_classifier_for(self, node_id, y_):
         """The estimator to fit at a node: the base estimator, or a constant predictor when the

@@ -756,3 +756,22 @@ def test_mlb_per_class_thresholds_must_match_binarizer():
     clf, X, y, _ = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=[0.5, 0.5])
 
     assert_that(calling(clf.fit).with_args(X, y), raises(ValueError, "mlb_prediction_threshold"))
+
+
+def test_inclusive_training_strategy_uses_out_of_subtree_documents_as_negatives():
+    """With training_strategy="inclusive" a node's classifier also sees documents from outside its
+    subtree (as all-negative rows), so its scores are calibrated for documents it would otherwise
+    never have been trained on."""
+    clf, X, y, _ = make_fruit_veg_mlb_classifier(training_strategy="inclusive")
+
+    clf.fit(X, y)
+
+    vocabulary = clf.graph_.nodes["fruit"][CLASSIFIER][0].vocabulary_
+    assert_that("carrot" in vocabulary, is_(True))  # a veg-only word reached the fruit node's training set
+    assert_that(clf.graph_.nodes["fruit"]["metafeatures"]["n_samples"], is_(equal_to(6)))  # subtree size unchanged
+
+
+def test_inclusive_training_strategy_requires_mlb():
+    clf, (X, y) = make_classifier_and_data(training_strategy="inclusive")
+
+    assert_that(calling(clf.fit).with_args(X=X, y=y), raises(TypeError, "inclusive"))

@@ -30,11 +30,20 @@ class ParameterValidator:
                 )
             )
 
-        if (self.algorithm == "lcn") ^ bool(self.training_strategy):
+        if self.algorithm == "lcn" and not self.training_strategy:
+            raise TypeError("""When 'algorithm' is set to "lcn", 'training_strategy' must be set.""")
+
+        if self.algorithm == "lcpn" and self.training_strategy not in (None, "siblings", "inclusive"):
             raise TypeError(
-                """When 'algorithm' is set to "lcn", 'training_strategy' must be set
-                to a float or callable. Conversly, training_strategy should not be specified
-                when algorithm is not set to "lcn"."""
+                """When 'algorithm' is set to "lcpn", 'training_strategy' must be None, "siblings" (the default:
+                a node's classifier is trained on the documents of its subtree) or "inclusive" (documents from
+                outside the subtree are added as negatives)."""
+            )
+
+        if self.training_strategy == "inclusive" and self.mlb is None:
+            raise TypeError(
+                """'training_strategy' "inclusive" requires 'mlb': out-of-subtree documents are negatives for
+                every child, which only a multi-label (indicator) local classifier can express."""
             )
 
         if self.training_strategy and self.training_strategy not in VALID_TRAINING_STRATEGY:
