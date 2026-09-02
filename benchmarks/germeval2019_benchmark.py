@@ -8,9 +8,10 @@ full label set of each blurb (micro-F1 in both). The winning subtask-B system (T
 2019, micro-F1 0.6767) used this library in raw mode with a per-node TF-IDF + LinearSVC pipeline
 and a negative decision threshold to trade precision for recall; this script follows that recipe.
 
-Protocol: the decision threshold is chosen on the development split (model fitted on the training
-split only); the model is then refitted on train + dev and the test set is scored once per
-pre-registered threshold: the default 0, the dev-selected value, and the paper's -0.25.
+Protocol: the configuration (feature set, decision threshold, root fallback) is chosen on the
+development split with models fitted on the training split only; the model is then refitted on
+train + dev and the test set is scored once for the default configuration (light features,
+threshold 0) and once for the dev-selected one.
 
 The official data package (CC BY-NC 4.0, University of Hamburg Language Technology group) is
 downloaded on first use into ~/scikit_learn_data/germeval2019.
@@ -79,30 +80,45 @@ def make_hierarchy(text):
     return graph
 
 
-def make_base_estimator(C):
-    features = FeatureUnion(
-        [
-            ("word", TfidfVectorizer(ngram_range=(1, 2), max_features=70_000, sublinear_tf=True)),
-            ("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 3), max_features=70_000, sublinear_tf=True)),
-        ]
-    )
-    return make_pipeline(features, OneVsRestClassifier(LinearSVC(C=C)))
+FEATURE_SETS = {
+    # word 1-2 grams + character 2-3 grams
+    "light": lambda: [
+        ("word", TfidfVectorizer(ngram_range=(1, 2), max_features=70_000, sublinear_tf=True)),
+        ("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 3), max_features=70_000, sublinear_tf=True)),
+    ],
+    # the three views of the TwistBytes system (their second word view also removed German stopwords)
+    "heavy": lambda: [
+        ("word17", TfidfVectorizer(ngram_range=(1, 7), max_features=70_000, sublinear_tf=True)),
+        ("word13", TfidfVectorizer(ngram_range=(1, 3), min_df=2, max_features=70_000, sublinear_tf=True)),
+        ("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 3), max_features=70_000, sublinear_tf=True)),
+    ],
+}
 
 
-def make_classifier(graph, mlb, C, threshold):
+def make_base_estimator(C, features):
+    return make_pipeline(FeatureUnion(FEATURE_SETS[features]()), OneVsRestClassifier(LinearSVC(C=C)))
+
+
+def make_classifier(graph, mlb, C, features, threshold, min_root=0):
     return HierarchicalClassifier(
-        base_estimator=make_base_estimator(C),
+        base_estimator=make_base_estimator(C, features),
         class_hierarchy=graph,
         feature_extraction="raw",
         mlb=mlb,
         use_decision_function=True,
         mlb_prediction_threshold=threshold,
+        mlb_min_root_predictions=min_root,
     )
 
 
-def consistent(scores, threshold, graph, columns):
-    """Emulate the native walk on an all-node score matrix: positive iff above threshold and parent positive."""
+def consistent(scores, threshold, graph, columns, min_root=0, root_columns=()):
+    """Emulate the native walk on an all-node score matrix: positive iff above threshold and parent positive,
+    with the best-scoring root child forced positive for samples without one when `min_root` is 1."""
     predicted = (scores > threshold).astype(int)
+    if min_root:
+        missing = np.flatnonzero(predicted[:, root_columns].sum(axis=1) == 0)
+        best_root = np.asarray(root_columns)[np.argmax(scores[missing][:, root_columns], axis=1)]
+        predicted[missing, best_root] = 1
     for node in topological_sort(graph):
         if node == ROOT or next(graph.predecessors(node)) == ROOT:
             continue
@@ -137,35 +153,41 @@ def main():
         f"internal), labels/blurb {Y_train.sum(1).mean():.2f}"
     )
 
-    # --- choose the decision threshold on dev, using every node's score (threshold -inf visits all nodes)
-    start = time.perf_counter()
-    scores_dev = make_classifier(graph, mlb, args.C, -np.inf).fit(X_train, Y_train).predict_proba(X_dev)
-    print(f"fit on train: {time.perf_counter() - start:.0f}s")
-    grid = np.round(np.arange(-0.6, 0.31, 0.05), 2)
-    dev_f1 = {t: micro_f1(Y_dev, consistent(scores_dev, t, graph, columns)) for t in grid}
-    best_t = max(dev_f1, key=dev_f1.get)
-    print("dev subtask-B micro-F1 by threshold: " + "  ".join(f"{t:+.2f}:{f:.4f}" for t, f in dev_f1.items()))
-    print(f"chosen threshold: {best_t:+.2f} (dev micro-F1 {dev_f1[best_t]:.4f})")
-
-    # --- refit on train + dev, score the test set once per pre-registered threshold
-    X_all, Y_all = X_train + X_dev, np.vstack([Y_train, Y_dev])
-    thresholds = {
-        "default threshold 0": 0.0,
-        f"dev-selected threshold {best_t:+.2f}": best_t,
-        "paper's threshold -0.25": -0.25,
-    }
-    for name, threshold in thresholds.items():
+    # --- choose feature set, threshold and root fallback on dev (models fitted on train only), using every
+    #     node's score (threshold -inf visits all nodes) and emulating the walk for each candidate
+    grid = np.round(np.arange(-0.5, 0.21, 0.05), 2)
+    dev_f1 = {}
+    for features in FEATURE_SETS:
         start = time.perf_counter()
-        clf = make_classifier(graph, mlb, args.C, threshold).fit(X_all, Y_all)
+        scores_dev = make_classifier(graph, mlb, args.C, features, -np.inf).fit(X_train, Y_train).predict_proba(X_dev)
+        print(f"{features} features: fit on train + score dev {time.perf_counter() - start:.0f}s", flush=True)
+        for min_root in (0, 1):
+            for t in grid:
+                dev_f1[(features, t, min_root)] = micro_f1(
+                    Y_dev, consistent(scores_dev, t, graph, columns, min_root, root_columns)
+                )
+        best = max((k for k in dev_f1 if k[0] == features), key=dev_f1.get)
+        print(f"  best on dev: threshold {best[1]:+.2f}, min_root {best[2]}: subtask-B micro-F1 {dev_f1[best]:.4f}")
+    chosen = max(dev_f1, key=dev_f1.get)
+    print(f"chosen: {chosen[0]} features, threshold {chosen[1]:+.2f}, min_root {chosen[2]} (dev {dev_f1[chosen]:.4f})")
+
+    # --- refit on train + dev, score the test set once per pre-registered configuration
+    X_all, Y_all = X_train + X_dev, np.vstack([Y_train, Y_dev])
+    configurations = {"default (light, threshold 0)": ("light", 0.0, 0), "dev-selected": chosen}
+    for name, (features, threshold, min_root) in configurations.items():
+        start = time.perf_counter()
+        clf = make_classifier(graph, mlb, args.C, features, threshold, min_root).fit(X_all, Y_all)
         t_fit = time.perf_counter() - start
         start = time.perf_counter()
         Y_pred = clf.predict(X_test)
         t_predict = time.perf_counter() - start
         print(
-            f"TEST {name:<30} subtask B micro-F1 {micro_f1(Y_test, Y_pred):.4f}   "
+            f"TEST {name:<28} ({features}, t={threshold:+.2f}, min_root={min_root})   "
+            f"subtask B micro-F1 {micro_f1(Y_test, Y_pred):.4f}   "
             f"subtask A micro-F1 {micro_f1(Y_test[:, root_columns], Y_pred[:, root_columns]):.4f}   "
             f"labels/blurb {Y_pred.sum(1).mean():.2f}  no-label {np.mean(Y_pred.sum(1) == 0):.3f}   "
-            f"fit {t_fit:.0f}s predict {t_predict:.1f}s"
+            f"fit {t_fit:.0f}s predict {t_predict:.1f}s",
+            flush=True,
         )
     print("published test scores: TwistBytes (this library, t=-0.25) subtask B 0.6767 (1st of 10);")
     print("                       TwistBytes flat model subtask A 0.8634 (2nd)")
