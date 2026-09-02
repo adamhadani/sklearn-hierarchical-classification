@@ -36,10 +36,12 @@ from sklearn_hierarchical_classification.constants import ROOT
 
 
 class CentroidClassifier(ClassifierMixin, BaseEstimator):
-    """Nearest-centroid classifier with a softmax over cosine-ish scores.
+    """Nearest-centroid classifier with a softmax over dot-product scores.
 
     Fit is one sparse matmul and predict_proba is one more, so timings are dominated by whatever
-    the meta-estimator does around it.
+    the meta-estimator does around it. Not `sklearn.neighbors.NearestCentroid`: that scores by
+    euclidean distance (a dense pass over X) and its binary `decision_function` is 1-D, whereas
+    this one is a single sparse product and always returns one column per class.
     """
 
     def fit(self, X, y):
@@ -89,13 +91,11 @@ def make_hierarchy(depth, branching, dag_extra_edges=0, seed=0):
             internal.extend(next_level)
         level = next_level
     leaves = level
-    added = 0
-    while added < dag_extra_edges:
-        parent = internal[rng.integers(len(internal))]
-        leaf = leaves[rng.integers(len(leaves))]
-        if not graph.has_edge(parent, leaf) and next(graph.predecessors(leaf)) != parent:
-            graph.add_edge(parent, leaf)
-            added += 1
+    candidates = [(parent, leaf) for parent in internal for leaf in leaves if not graph.has_edge(parent, leaf)]
+    if dag_extra_edges > len(candidates):
+        raise ValueError(f"at most {len(candidates)} extra DAG edges are possible for this hierarchy")
+    for pick in rng.choice(len(candidates), size=dag_extra_edges, replace=False):
+        graph.add_edge(*candidates[pick])
     return graph, leaves
 
 
