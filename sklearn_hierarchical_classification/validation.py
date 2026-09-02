@@ -1,5 +1,7 @@
 """Validation helpers."""
 
+import numpy as np
+
 from sklearn_hierarchical_classification.constants import (
     VALID_ALGORITHM,
     VALID_FEATURE_EXTRACTION,
@@ -68,6 +70,19 @@ class ParameterValidator:
             raise TypeError(
                 """Early stopping ('prediction_depth' set to "nmlnp" or a 'stopping_criteria') is only defined
                 for single-label prediction and cannot be combined with 'mlb'."""
+            )
+
+        if self.mlb is not None and np.ndim(self.mlb_prediction_threshold) not in (0, 1):
+            raise ValueError("'mlb_prediction_threshold' must be a float or a 1-D array-like of per-class thresholds.")
+
+        if (
+            self.mlb is not None
+            and np.ndim(self.mlb_prediction_threshold) == 1
+            and len(self.mlb_prediction_threshold) != len(self.mlb.classes_)
+        ):
+            raise ValueError(
+                f"'mlb_prediction_threshold' has {len(self.mlb_prediction_threshold)} entries but 'mlb' has "
+                f"{len(self.mlb.classes_)} classes; give one threshold per class in the order of mlb.classes_."
             )
 
         if self.feature_extraction not in VALID_FEATURE_EXTRACTION:

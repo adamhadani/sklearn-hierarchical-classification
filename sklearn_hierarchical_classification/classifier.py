@@ -183,9 +183,11 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
     mlb : MultiLabelBinarizer or None
         For multi-label classification, the MultiLabelBinarizer instance that was used for creating the y variable.
 
-    mlb_prediction_threshold : float
-        For multi-label prediction tasks (when `mlb` is set to a MultiLabelBinarizer instance), can define a prediction
-        score threshold to use for considering a label to be a prediction. Defaults to zero.
+    mlb_prediction_threshold : float, or array-like of shape [n_classes]
+        For multi-label prediction tasks (when `mlb` is set to a MultiLabelBinarizer instance), the score above which
+        a child node is considered predicted and descended into. Either a single threshold or one per class, in the
+        order of `mlb.classes_` (e.g. per-class thresholds tuned on held-out data). Defaults to zero. To obtain the
+        scores of every node for such tuning, predict with `mlb_prediction_threshold=-np.inf`, which visits all nodes.
 
     use_decision_function : bool
         Some classifiers (e.g. sklearn.svm.SVC) expose a `.decision_function()` method which would take in the
@@ -388,20 +390,26 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         ]
 
     def _descend_multi_label(self, node_id, clf, rows, scores, state):
-        """Accumulate local scores and descend into every child of this node scoring above the threshold."""
+        """Accumulate local scores and descend into every child of this node scoring above its threshold."""
         columns = state.columns_of(clf.classes_)
         state.add_scores(rows, columns, scores)
         children = set(self.graph_.successors(node_id))
+        thresholds = self._class_thresholds()
         next_nodes = []
         for local_column, column in enumerate(columns):
             child = self.mlb.classes_[column]
             if child not in children:
                 # A local class that is not a child of this node (e.g. an ancestor's column) never routes samples
                 continue
-            selected = rows[scores[:, local_column] > self.mlb_prediction_threshold]
+            selected = rows[scores[:, local_column] > thresholds[column]]
             if len(selected):
                 next_nodes.append((child, state.record(child, selected)))
         return next_nodes
+
+    def _class_thresholds(self):
+        """One prediction threshold per `mlb.classes_` column."""
+        thresholds = np.asarray(self.mlb_prediction_threshold, dtype=np.float64)
+        return np.broadcast_to(thresholds, (len(self.mlb.classes_),))
 
     def _visits_as_indicator(self, state, n_samples):
         indicator = np.zeros((n_samples, len(self.mlb.classes_)), dtype=int)

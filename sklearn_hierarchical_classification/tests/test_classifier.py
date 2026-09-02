@@ -9,12 +9,14 @@ import numpy as np
 import pytest
 from hamcrest import (
     assert_that,
+    calling,
     close_to,
     contains_inanyorder,
     equal_to,
     has_entries,
     has_item,
     is_,
+    raises,
 )
 from networkx import DiGraph, dfs_preorder_nodes
 from numpy import where
@@ -719,3 +721,38 @@ def test_mlb_with_preprocessed_sparse_features():
 
     assert_that(y_pred.shape, is_(equal_to((200, len(mlb.classes_)))))
     assert_that(float((y_pred == mlb.transform(labels)).mean()), is_(close_to(1.0, delta=0.02)))
+
+
+def make_fruit_veg_mlb_classifier(**kwargs):
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    mlb = MultiLabelBinarizer().fit(labels)
+    clf = make_classifier(
+        base_estimator=make_pipeline(CountVectorizer(), OneVsRestClassifier(LogisticRegression())),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+        mlb=mlb,
+        **kwargs,
+    )
+    return clf, X, mlb.transform(labels), mlb
+
+
+def test_mlb_per_class_prediction_thresholds():
+    """`mlb_prediction_threshold` may be one threshold per `mlb.classes_` column; a child whose
+    threshold is never reached is not visited, and neither is anything below it."""
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier()
+    thresholds = np.full(len(mlb.classes_), 0.5)
+    thresholds[list(mlb.classes_).index("veg")] = np.inf
+    clf.set_params(mlb_prediction_threshold=thresholds)
+
+    clf.fit(X, y)
+    y_pred = clf.predict(X)
+
+    columns = {label: column for column, label in enumerate(mlb.classes_)}
+    assert_that(y_pred[:, [columns["veg"], columns["carrot"], columns["leek"]]].sum(), is_(equal_to(0)))
+    assert_that(y_pred[:6, columns["fruit"]].tolist(), is_(equal_to([1] * 6)))
+
+
+def test_mlb_per_class_thresholds_must_match_binarizer():
+    clf, X, y, _ = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=[0.5, 0.5])
+
+    assert_that(calling(clf.fit).with_args(X, y), raises(ValueError, "mlb_prediction_threshold"))
