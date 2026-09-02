@@ -45,7 +45,10 @@ score matrix for such tuning, which `thresholds.scut_thresholds` consumes. Tune 
 *locally* (pass `graph`): sibling-trained local classifiers give meaningless scores to
 out-of-subtree samples, and a global SCut on the all-node matrix gets worse than no tuning
 (RCV1: 0.819 vs 0.827 OOF micro-F1; local: 0.838). `mlb_min_root_predictions` forces the
-best-scoring root children for samples that would otherwise get no top-level label.
+best-scoring root children for samples that would otherwise get no top-level label. In
+multi-label mode a node only routes to children that had a positive example in its training
+set (`graph_.nodes[n][TRAINED_CLASSES]`): one-vs-rest gives an unlearned class a constant
+predictor with decision value 0, which any negative threshold would select for every sample.
 
 **`rollup_nodes` uses a descendant map, not `all_simple_paths`.** `children_by_descendant`
 maps every strict descendant of the source to the children it lies under, so each child is

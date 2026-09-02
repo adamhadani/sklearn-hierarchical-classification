@@ -23,6 +23,7 @@ from sklearn_hierarchical_classification.constants import (
     DEFAULT,
     METAFEATURES,
     ROOT,
+    TRAINED_CLASSES,
 )
 from sklearn_hierarchical_classification.decorators import logger
 from sklearn_hierarchical_classification.dummy import DummyProgress
@@ -407,7 +408,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
         # Only local classes that are children of this node route samples (an ancestor's or sibling's column
         # may be among the local classes and is scored, but never followed)
-        children = set(self.graph_.successors(node_id))
+        children = set(self.graph_.successors(node_id)) & self.graph_.nodes[node_id][TRAINED_CLASSES]
         local = [local_column for local_column, column in enumerate(columns) if self.mlb.classes_[column] in children]
         child_scores = scores[:, local]
         selected = child_scores > self._class_thresholds()[columns[local]]
@@ -606,6 +607,10 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         clf.fit(X=X_, y=y_)
         self._check_local_classes(node_id, clf)
         self.graph_.nodes[node_id][CLASSIFIER] = clf
+        if self.mlb is not None:
+            # Children with no positive example here were not learned: a one-vs-rest estimator falls back to a
+            # constant predictor for them (decision value 0), which a negative threshold would otherwise select
+            self.graph_.nodes[node_id][TRAINED_CLASSES] = {self.mlb.classes_[j] for j in np.flatnonzero(y_.any(axis=0))}
 
     def _check_local_classes(self, node_id, clf):
         """A single-label local classifier must predict hierarchy nodes, or prediction cannot route."""

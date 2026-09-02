@@ -32,6 +32,7 @@ from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.svm import LinearSVC
 from sklearn.utils.estimator_checks import check_estimator
 
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
@@ -790,3 +791,25 @@ def test_mlb_min_root_predictions_guarantees_a_root_label():
     assert_that(roots.sum(axis=1).tolist(), is_(equal_to([1] * len(X))))
     assert_that(roots[:, 0].tolist(), is_(equal_to([1] * 6 + [0] * 6)))  # best root matches the true one
     assert_that(int(y_pred.sum()), is_(equal_to(len(X))))  # nothing below the root cleared the threshold
+
+
+def test_mlb_child_without_training_examples_is_never_predicted():
+    """A child that has no positive example at its parent cannot have been learned; with a negative
+    threshold the constant one-vs-rest predictor (decision value 0) must not select it for everyone."""
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    class_hierarchy["fruit"].append("kiwi")  # in the hierarchy, but no blurb is labeled with it
+    mlb = MultiLabelBinarizer(classes=[*sorted({label for pair in labels for label in pair}), "kiwi"]).fit([[]])
+    clf = make_classifier(
+        base_estimator=make_pipeline(CountVectorizer(), OneVsRestClassifier(LinearSVC())),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+        mlb=mlb,
+        use_decision_function=True,
+        mlb_prediction_threshold=-0.5,
+    )
+
+    clf.fit(X, mlb.transform(labels))
+    y_pred = clf.predict(X)
+
+    assert_that(int(y_pred[:, list(mlb.classes_).index("kiwi")].sum()), is_(equal_to(0)))
+    assert_that(int(y_pred[:6, list(mlb.classes_).index("apple")].sum()) > 0, is_(True))
