@@ -194,3 +194,23 @@ def test_fill_ancestors_on_dag_with_tied_root_distance():
 
     assert_that(y_filled.tolist(), is_(equal_to([[1, 1, 1, 1]])))
     assert_that(y.tolist(), is_(equal_to([[0, 0, 0, 1]])))
+
+
+def test_multi_labeled_accepts_label_sets():
+    """Label sets given as sets (not only lists) are passed through to the binarizer unchanged."""
+    graph = DiGraph([(ROOT, "cat"), (ROOT, "dog")])
+
+    with multi_labeled([{"cat", "dog"}, {"dog"}], [{"cat"}, {"dog"}], graph) as (y_true_, y_pred_, _):
+        assert_that(y_true_.tolist(), is_(equal_to([[1, 1], [0, 1]])))
+        assert_that(y_pred_.tolist(), is_(equal_to([[1, 0], [0, 1]])))
+
+
+def test_multi_labeled_rejects_indicator_matrix():
+    """An already-binarized indicator matrix is not a list of label sets; fail loudly rather than
+    binarize its 0/1 entries as labels."""
+    graph = DiGraph([(ROOT, "cat"), (ROOT, "dog")])
+    y_indicator = np.array([[1, 0], [0, 1]])
+
+    with pytest.raises(ValueError, match="indicator"):  # noqa: SIM117
+        with multi_labeled(y_indicator, y_indicator, graph):
+            pass
