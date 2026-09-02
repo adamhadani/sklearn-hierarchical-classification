@@ -21,7 +21,7 @@ jobs:
         fetch-depth: 0  # setuptools-scm needs the full tag history
         persist-credentials: false
     - name: Install uv
-      uses: astral-sh/setup-uv@v10
+      uses: astral-sh/setup-uv@v10.0.1
       with:
         python-version: "3.13"
         version: "latest"

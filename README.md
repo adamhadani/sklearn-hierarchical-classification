@@ -71,6 +71,7 @@ clf = HierarchicalClassifier(
     base_estimator=svm.LinearSVC(),
     class_hierarchy=class_hierarchy,
     progress_wrapper=tqdm_notebook,
+    use_decision_function=True,  # LinearSVC exposes decision_function rather than predict_proba
 )
 ```
 
