@@ -133,6 +133,7 @@ scikit-learn) against a flat one-vs-rest baseline on the same TF-IDF features. R
 |---|---:|---:|---:|---:|---:|
 | Flat `OneVsRest(LinearSVC)` | 0.804 | 0.486 | 0.808 | 3.7 s | 5.7 s |
 | `HierarchicalClassifier` (LCPN, `LinearSVC` per node) | 0.796 | 0.514 | 0.796 | 1.9 s | 2.2 s |
+| `HierarchicalClassifier` + per-class thresholds tuned by 5-fold CV (`--tune`) | 0.803 | 0.586 | 0.803 | 11.1 s | 2.4 s |
 | Published SVM, per-category tuned thresholds (Lewis et al. 2004) | 0.816 | 0.607 | | | |
 
     uv run python benchmarks/bench.py --help
