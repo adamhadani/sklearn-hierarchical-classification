@@ -9,12 +9,14 @@ import numpy as np
 import pytest
 from hamcrest import (
     assert_that,
+    calling,
     close_to,
     contains_inanyorder,
     equal_to,
     has_entries,
     has_item,
     is_,
+    raises,
 )
 from networkx import DiGraph, dfs_preorder_nodes
 from numpy import where
@@ -30,10 +32,11 @@ from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.svm import LinearSVC
 from sklearn.utils.estimator_checks import check_estimator
 
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
-from sklearn_hierarchical_classification.constants import CLASSIFIER, DEFAULT, ROOT
+from sklearn_hierarchical_classification.constants import CLASSIFIER, DEFAULT, ROOT, TRAINED_CLASSES
 from sklearn_hierarchical_classification.tests.fixtures import (
     make_classifier,
     make_classifier_and_data,
@@ -719,3 +722,170 @@ def test_mlb_with_preprocessed_sparse_features():
 
     assert_that(y_pred.shape, is_(equal_to((200, len(mlb.classes_)))))
     assert_that(float((y_pred == mlb.transform(labels)).mean()), is_(close_to(1.0, delta=0.02)))
+
+
+def make_fruit_veg_mlb_classifier(**kwargs):
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    mlb = MultiLabelBinarizer().fit(labels)
+    clf = make_classifier(
+        base_estimator=make_pipeline(CountVectorizer(), OneVsRestClassifier(LogisticRegression())),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+        mlb=mlb,
+        **kwargs,
+    )
+    return clf, X, mlb.transform(labels), mlb
+
+
+def test_mlb_per_class_prediction_thresholds():
+    """`mlb_prediction_threshold` may be one threshold per `mlb.classes_` column; a child whose
+    threshold is never reached is not visited, and neither is anything below it."""
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier()
+    thresholds = np.full(len(mlb.classes_), 0.5)
+    thresholds[list(mlb.classes_).index("veg")] = np.inf
+    clf.set_params(mlb_prediction_threshold=thresholds)
+
+    clf.fit(X, y)
+    y_pred = clf.predict(X)
+
+    columns = {label: column for column, label in enumerate(mlb.classes_)}
+    assert_that(y_pred[:, [columns["veg"], columns["carrot"], columns["leek"]]].sum(), is_(equal_to(0)))
+    assert_that(y_pred[:6, columns["fruit"]].tolist(), is_(equal_to([1] * 6)))
+
+
+def test_mlb_per_class_thresholds_must_match_binarizer():
+    clf, X, y, _ = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=[0.5, 0.5])
+
+    assert_that(calling(clf.fit).with_args(X, y), raises(ValueError, "mlb_prediction_threshold"))
+
+
+def test_inclusive_training_strategy_uses_out_of_subtree_documents_as_negatives():
+    """With training_strategy="inclusive" a node's classifier also sees documents from outside its
+    subtree (as all-negative rows), so its scores are calibrated for documents it would otherwise
+    never have been trained on."""
+    clf, X, y, _ = make_fruit_veg_mlb_classifier(training_strategy="inclusive")
+
+    clf.fit(X, y)
+
+    vocabulary = clf.graph_.nodes["fruit"][CLASSIFIER][0].vocabulary_
+    assert_that("carrot" in vocabulary, is_(True))  # a veg-only word reached the fruit node's training set
+    assert_that(clf.graph_.nodes["fruit"]["metafeatures"]["n_samples"], is_(equal_to(6)))  # subtree size unchanged
+
+
+def test_inclusive_training_strategy_requires_mlb():
+    clf, (X, y) = make_classifier_and_data(training_strategy="inclusive")
+
+    assert_that(calling(clf.fit).with_args(X=X, y=y), raises(TypeError, "inclusive"))
+
+
+def test_mlb_min_root_predictions_guarantees_a_root_label():
+    """With `mlb_min_root_predictions=1`, a sample for which no child of the root clears its threshold
+    still descends into the best-scoring one, so every sample gets at least one top-level label."""
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=np.inf, mlb_min_root_predictions=1)
+
+    clf.fit(X, y)
+    y_pred = clf.predict(X)
+
+    columns = {label: column for column, label in enumerate(mlb.classes_)}
+    roots = y_pred[:, [columns["fruit"], columns["veg"]]]
+    assert_that(roots.sum(axis=1).tolist(), is_(equal_to([1] * len(X))))
+    assert_that(roots[:, 0].tolist(), is_(equal_to([1] * 6 + [0] * 6)))  # best root matches the true one
+    assert_that(int(y_pred.sum()), is_(equal_to(len(X))))  # nothing below the root cleared the threshold
+
+
+def test_mlb_child_without_training_examples_is_never_predicted():
+    """A child that has no positive example at its parent cannot have been learned; with a negative
+    threshold the constant one-vs-rest predictor (decision value 0) must not select it for everyone."""
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    class_hierarchy["fruit"].append("kiwi")  # in the hierarchy, but no blurb is labeled with it
+    mlb = MultiLabelBinarizer(classes=[*sorted({label for pair in labels for label in pair}), "kiwi"]).fit([[]])
+    clf = make_classifier(
+        base_estimator=make_pipeline(CountVectorizer(), OneVsRestClassifier(LinearSVC())),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+        mlb=mlb,
+        use_decision_function=True,
+        mlb_prediction_threshold=-0.5,
+    )
+
+    clf.fit(X, mlb.transform(labels))
+    y_pred = clf.predict(X)
+
+    assert_that(int(y_pred[:, list(mlb.classes_).index("kiwi")].sum()), is_(equal_to(0)))
+    assert_that(int(y_pred[:6, list(mlb.classes_).index("apple")].sum()) > 0, is_(True))
+
+
+def test_mlb_min_root_predictions_only_fills_in_when_too_few_children_pass():
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier()
+    columns = {label: column for column, label in enumerate(mlb.classes_)}
+    thresholds = np.zeros(len(mlb.classes_))
+    thresholds[columns["fruit"]] = np.inf  # fruit never passes on its own ...
+    thresholds[columns["veg"]] = -np.inf  # ... and veg always does, so every blurb has a root label
+    clf.set_params(mlb_prediction_threshold=thresholds, mlb_min_root_predictions=1)
+
+    clf.fit(X, y)
+    y_pred = clf.predict(X)
+
+    # fruit scores best on fruit blurbs, but they already have a root label: nothing is filled in
+    assert_that(y_pred[:, columns["fruit"]].tolist(), is_(equal_to([0] * len(X))))
+    assert_that(y_pred[:, columns["veg"]].tolist(), is_(equal_to([1] * len(X))))
+
+
+def test_mlb_predict_proba_on_dag_reports_the_score_routing_uses():
+    """A class under two parents is scored by both; predict_proba reports the maximum, which is the
+    quantity a threshold on the child is compared against (it is reached if any parent passes)."""
+    class_hierarchy = {ROOT: ["A", "B"], "A": ["a1", "shared"], "B": ["b1", "shared"]}
+    rng = np.random.default_rng(0)
+    leaves = np.array(["a1", "shared", "b1"])[rng.integers(3, size=150)]
+    labels = [[leaf, "A"] if leaf == "a1" else [leaf, "B"] if leaf == "b1" else [leaf, "A", "B"] for leaf in leaves]
+    mlb = MultiLabelBinarizer().fit(labels)
+    X = csr_matrix(rng.random((150, 6)) * 0.1)
+    X[np.arange(150), [{"a1": 0, "shared": 1, "b1": 2}[leaf] for leaf in leaves]] = 1.0
+    clf = make_classifier(
+        base_estimator=OneVsRestClassifier(LogisticRegression()),
+        class_hierarchy=class_hierarchy,
+        mlb=mlb,
+        use_decision_function=True,
+        mlb_prediction_threshold=-np.inf,
+    )
+    clf.fit(X, mlb.transform(labels))
+
+    proba = clf.predict_proba(X)
+
+    shared = list(mlb.classes_).index("shared")
+
+    def local_score(node):
+        local = clf.graph_.nodes[node][CLASSIFIER]
+        return clf._local_scores(local, X)[:, list(local.classes_).index(shared)]
+
+    assert_that(np.allclose(proba[:, shared], np.maximum(local_score("A"), local_score("B"))), is_(True))
+
+
+def test_mlb_thresholds_are_validated_at_predict_time():
+    """The tuning workflow sets thresholds with set_params after fit, so predict must validate them."""
+    clf, X, y, _ = make_fruit_veg_mlb_classifier()
+    clf.fit(X, y)
+
+    clf.set_params(mlb_prediction_threshold=[0.5, 0.5])
+    assert_that(calling(clf.predict).with_args(X), raises(ValueError, "mlb_prediction_threshold"))
+    clf.set_params(mlb_prediction_threshold=None)
+    assert_that(calling(clf.predict).with_args(X), raises(ValueError, "mlb_prediction_threshold"))
+
+
+def test_mlb_model_without_trained_classes_attribute_still_routes():
+    """Multi-label models fitted before children were recorded at fit (older pickles) keep working."""
+    clf, X, y, _ = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=0.5)
+    clf.fit(X, y)
+    for _, attrs in clf.graph_.nodes(data=True):
+        attrs.pop(TRAINED_CLASSES, None)
+
+    y_pred = clf.predict(X)
+
+    assert_that(int(y_pred.sum()) > 0, is_(True))
+
+
+def test_lcn_still_accepts_inclusive_without_mlb():
+    """`inclusive` needs `mlb` only for lcpn; the lcn strategies are validated as before."""
+    clf, (X, y) = make_classifier_and_data(algorithm="lcn", training_strategy="inclusive")
+
+    clf.fit(X, y)

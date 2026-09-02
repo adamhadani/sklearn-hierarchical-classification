@@ -55,8 +55,13 @@ y_pred = clf.predict(X_test)
 ```
 
 The base estimator must expose `predict_proba` (or `decision_function`, when
-`use_decision_function=True`). See [examples/](./examples/) for a complete, runnable example that also
-demonstrates the hierarchical evaluation metrics.
+`use_decision_function=True`). For multi-label hierarchies pass the fitted `MultiLabelBinarizer` as
+`mlb`; `mlb_prediction_threshold` then takes either one threshold or one per class, and
+`training_strategy="inclusive"` trains each node on out-of-subtree documents as negatives as well, which
+lets tuned thresholds recover from routing mistakes higher up. `sklearn_hierarchical_classification.thresholds` tunes such
+thresholds from held-out scores (per-class SCut, optionally local to each parent, or a single
+label-cardinality threshold). See [examples/](./examples/) for a
+complete, runnable example that also demonstrates the hierarchical evaluation metrics.
 
 ### Jupyter notebooks
 
@@ -93,6 +98,9 @@ clf = HierarchicalClassifier(
   the nodes visited by each sample, matching the `y` passed to `fit` and the columns of
   `predict_proba()`. It previously returned an array of root-prefixed node paths with duplicated entries.
   `predict_proba()` in that mode is now sized by `mlb.classes_`.
+- On a DAG, `predict_proba()` in multi-label mode reports for a class under several visited parents the
+  highest of its local scores (previously their sum), which is the quantity its prediction threshold is
+  compared with.
 - Early stopping (`prediction_depth="nmlnp"` / `stopping_criteria`) is rejected together with `mlb`; it
   was silently ignored before. A callable `stopping_criteria` returns True to stop (the code always
   behaved this way; the docstring said the opposite) and is no longer consulted at the root.
@@ -128,6 +136,7 @@ scikit-learn) against a flat one-vs-rest baseline on the same TF-IDF features. R
 |---|---:|---:|---:|---:|---:|
 | Flat `OneVsRest(LinearSVC)` | 0.804 | 0.486 | 0.808 | 3.7 s | 5.7 s |
 | `HierarchicalClassifier` (LCPN, `LinearSVC` per node) | 0.796 | 0.514 | 0.796 | 1.9 s | 2.2 s |
+| `HierarchicalClassifier` + per-class thresholds tuned by 5-fold CV (`--tune`) | 0.792 | 0.595 | 0.792 | 10.6 s | 2.3 s |
 | Published SVM, per-category tuned thresholds (Lewis et al. 2004) | 0.816 | 0.607 | | | |
 
     uv run python benchmarks/bench.py --help

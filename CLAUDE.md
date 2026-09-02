@@ -32,10 +32,26 @@ Row sets are unions, so a DAG node with two parents contributes its rows once to
 ancestor; on a DAG a sample under several children is repeated by index, so the input type
 (dense or sparse) is preserved at every node. Rows are chosen by label only: an all-zero
 feature row is still a training sample. The fitted model keeps no reference to the training
-data; `graph_.nodes[n]` holds only `metafeatures` and `classifier`. Multi-label (`mlb`) works in
+data; `graph_.nodes[n]` holds `metafeatures`, `classifier` and, in multi-label mode, the
+`trained_classes` learned there. Multi-label (`mlb`) works in
 both modes: the indicator `y` is densified up front and validated with `multi_output=True`.
 Rolled-up children unknown to the binarizer give all-zero rows, which are dropped; a node
-left with none gets no classifier and a warning.
+left with none gets no classifier and a warning. The exception is
+`training_strategy="inclusive"` (mlb only): every document outside the subtree joins the
+node's training set as an all-zero row on purpose, so the local classifier can reject
+documents a parent mis-routes to it. Metafeatures still describe the subtree.
+`mlb_prediction_threshold` may be an array aligned with `mlb.classes_` (per-class cut-offs
+tuned on out-of-fold scores, validated again at predict since they are usually set after fit);
+predicting with `-inf` visits every node *learned at fit* and yields the score matrix for
+such tuning, which `thresholds.scut_thresholds` consumes. On a DAG that matrix reports the
+maximum over visited parents, which is exactly what routing compares to the threshold. Tune per class
+*locally* (pass `graph`): sibling-trained local classifiers give meaningless scores to
+out-of-subtree samples, and a global SCut on the all-node matrix gets worse than no tuning
+(RCV1: 0.819 vs 0.827 OOF micro-F1; local: 0.838). `mlb_min_root_predictions` forces the
+best-scoring root children for samples that would otherwise get no top-level label. In
+multi-label mode a node only routes to children that had a positive example in its training
+set (`graph_.nodes[n][TRAINED_CLASSES]`): one-vs-rest gives an unlearned class a constant
+predictor with decision value 0, which any negative threshold would select for every sample.
 
 **`rollup_nodes` uses a descendant map, not `all_simple_paths`.** `children_by_descendant`
 maps every strict descendant of the source to the children it lies under, so each child is

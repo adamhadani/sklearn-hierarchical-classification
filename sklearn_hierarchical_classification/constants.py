@@ -11,6 +11,7 @@ ROOT = "<ROOT>"
 CLASSIFIER = "classifier"
 DEFAULT = "default"
 METAFEATURES = "metafeatures"
+TRAINED_CLASSES = "trained_classes"
 
 # Enumeration of valid configuration types
 VALID_ALGORITHM = ("lcn", "lcpn")

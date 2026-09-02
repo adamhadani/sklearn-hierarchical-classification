@@ -12,10 +12,15 @@ otherwise under its category root; the alphabetic G codes (GCRIM, GPOL, ...) han
 Published reference (Lewis et al. 2004, Table 6, Topics, full test set): SVM with per-category
 SCut thresholds, micro-averaged F1 0.816 and macro-averaged F1 0.607.
 
+With --tune, per-class decision thresholds are tuned on 5-fold out-of-fold scores of the training
+set (SCut, local to each parent: see `sklearn_hierarchical_classification.thresholds`) and passed
+to the classifier as `mlb_prediction_threshold`; the test set is still scored once per model.
+
 Example:
 
     uv run python benchmarks/rcv1_benchmark.py                 # full test set
     uv run python benchmarks/rcv1_benchmark.py --n-test 100000  # quicker
+    uv run python benchmarks/rcv1_benchmark.py --tune           # + per-class thresholds from CV
 
 """
 
@@ -27,6 +32,7 @@ import numpy as np
 from networkx import DiGraph, ancestors, relabel_nodes
 from sklearn.datasets import fetch_rcv1
 from sklearn.metrics import f1_score
+from sklearn.model_selection import KFold
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.svm import LinearSVC
@@ -34,6 +40,7 @@ from sklearn.svm import LinearSVC
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
 from sklearn_hierarchical_classification.constants import ROOT
 from sklearn_hierarchical_classification.metrics import h_fbeta_score, h_precision_score, h_recall_score
+from sklearn_hierarchical_classification.thresholds import scut_thresholds
 
 
 CATEGORY_ROOTS = {"C": "CCAT", "E": "ECAT", "G": "GCAT", "M": "MCAT"}
@@ -53,6 +60,27 @@ def parent_of(code, codes):
 def make_topic_hierarchy(codes):
     codes = set(codes)
     return DiGraph([(parent_of(code, codes), code) for code in codes])
+
+
+def make_hierarchical(graph, mlb, C, threshold=0.0):
+    return HierarchicalClassifier(
+        base_estimator=OneVsRestClassifier(LinearSVC(C=C)),
+        class_hierarchy=graph,
+        mlb=mlb,
+        use_decision_function=True,
+        mlb_prediction_threshold=threshold,
+    )
+
+
+def tuned_thresholds(graph, mlb, C, X, y, n_folds=5):
+    """Per-class SCut thresholds from out-of-fold all-node scores on the training set."""
+    scores, scored = np.zeros(y.shape), np.zeros(y.shape, dtype=bool)
+    for fit_rows, score_rows in KFold(n_folds, shuffle=True, random_state=0).split(X):
+        clf = make_hierarchical(graph, mlb, C, threshold=-np.inf).fit(X[fit_rows], y[fit_rows])
+        scores[score_rows] = clf.predict_proba(X[score_rows])
+        # A class without positives in this fold's training part is not learned, hence not scored
+        scored[score_rows] = y[fit_rows].any(axis=0)
+    return scut_thresholds(scores, y, graph=graph, classes=mlb.classes_, scored=scored)
 
 
 def timed(fn, *args):
@@ -78,6 +106,9 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--n-test", type=int, default=None, help="use only the first N test documents")
     parser.add_argument("--C", type=float, default=1.0, help="LinearSVC regularisation")
+    parser.add_argument(
+        "--tune", action="store_true", help="tune per-class thresholds with 5-fold CV on the training set"
+    )
     args = parser.parse_args()
 
     train, test = fetch_rcv1(subset="train"), fetch_rcv1(subset="test")
@@ -102,16 +133,18 @@ def main():
     y_flat, t_predict = timed(flat.predict, X_test)
     report("flat OneVsRest(LinearSVC)", y_test, y_flat, graph_by_column, t_fit, t_predict)
 
-    clf = HierarchicalClassifier(
-        base_estimator=OneVsRestClassifier(LinearSVC(C=args.C)),
-        class_hierarchy=graph,
-        mlb=mlb,
-        use_decision_function=True,
-        mlb_prediction_threshold=0.0,
-    )
+    clf = make_hierarchical(graph, mlb, args.C)
     _, t_fit = timed(clf.fit, X_train, y_train)
     y_hier, t_predict = timed(clf.predict, X_test)
     report("hierarchical (LCPN, LinearSVC)", y_test, y_hier, graph_by_column, t_fit, t_predict)
+
+    if args.tune:
+        y_train_dense = y_train.toarray()
+        thresholds, t_tune = timed(tuned_thresholds, graph, mlb, args.C, X_train, y_train_dense)
+        clf = make_hierarchical(graph, mlb, args.C, threshold=thresholds)
+        _, t_fit = timed(clf.fit, X_train, y_train)
+        y_hier, t_predict = timed(clf.predict, X_test)
+        report("hierarchical + local SCut (CV)", y_test, y_hier, graph_by_column, t_fit + t_tune, t_predict)
 
     print("published (Lewis et al. 2004)    micro-F1 0.816   macro-F1 0.607   (SVM, per-category tuned thresholds)")
     n_true, n_flat, n_hier = y_test.sum(1).mean(), y_flat.sum(1).mean(), y_hier.sum(1).mean()
