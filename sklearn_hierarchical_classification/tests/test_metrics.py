@@ -1,12 +1,14 @@
 """Unit-tests for the evaluation metrics module."""
 
+import numpy as np
 import pytest
-from hamcrest import assert_that, close_to, is_
+from hamcrest import assert_that, close_to, equal_to, is_
 from inflect import engine
 from networkx import DiGraph, relabel_nodes
 
 from sklearn_hierarchical_classification.constants import ROOT
 from sklearn_hierarchical_classification.metrics import (
+    fill_ancestors,
     h_fbeta_score,
     h_precision_score,
     h_recall_score,
@@ -158,3 +160,57 @@ def test_h_scores(graph, y_true, y_pred, expected_hr_score, expected_hp_score, e
             h_fbeta_score(y_true=y_true_, y_pred=y_pred_, class_hierarchy=graph_),
             is_(close_to(expected_hf1_score, delta=0.0001)),
         )
+
+
+def test_multi_labeled_accepts_scalar_labels():
+    """A 1-D array of (multi-character) labels must be treated as one label per sample,
+    not as an iterable of characters."""
+    graph = DiGraph([(ROOT, "cat"), (ROOT, "dog")])
+    y_true = np.array(["cat", "dog"])
+    y_pred = np.array(["cat", "cat"])
+
+    with multi_labeled(y_true, y_pred, graph) as (y_true_, y_pred_, graph_):
+        assert_that(y_true_.tolist(), is_(equal_to([[1, 0], [0, 1]])))
+        assert_that(y_pred_.tolist(), is_(equal_to([[1, 0], [1, 0]])))
+        assert_that(sorted(node for node in graph_.nodes if node != ROOT), is_(equal_to([0, 1])))
+
+
+def test_fill_ancestors_on_dag_with_tied_root_distance():
+    r"""On a DAG where another ancestor is as far from the target as the root, the root must
+    still be excluded and every real ancestor filled in.
+
+            ROOT
+           /    \
+          0      1
+          |      |
+          |      2
+           \    /
+             3
+    """
+    graph = DiGraph([(ROOT, 0), (ROOT, 1), (1, 2), (0, 3), (2, 3)])
+    y = np.array([[0, 0, 0, 1]])
+
+    y_filled = fill_ancestors(y, graph, root=ROOT)
+
+    assert_that(y_filled.tolist(), is_(equal_to([[1, 1, 1, 1]])))
+    assert_that(y.tolist(), is_(equal_to([[0, 0, 0, 1]])))
+
+
+def test_multi_labeled_accepts_label_sets():
+    """Label sets given as sets (not only lists) are passed through to the binarizer unchanged."""
+    graph = DiGraph([(ROOT, "cat"), (ROOT, "dog")])
+
+    with multi_labeled([{"cat", "dog"}, {"dog"}], [{"cat"}, {"dog"}], graph) as (y_true_, y_pred_, _):
+        assert_that(y_true_.tolist(), is_(equal_to([[1, 1], [0, 1]])))
+        assert_that(y_pred_.tolist(), is_(equal_to([[1, 0], [0, 1]])))
+
+
+def test_multi_labeled_rejects_indicator_matrix():
+    """An already-binarized indicator matrix is not a list of label sets; fail loudly rather than
+    binarize its 0/1 entries as labels."""
+    graph = DiGraph([(ROOT, "cat"), (ROOT, "dog")])
+    y_indicator = np.array([[1, 0], [0, 1]])
+
+    with pytest.raises(ValueError, match="indicator"):  # noqa: SIM117
+        with multi_labeled(y_indicator, y_indicator, graph):
+            pass

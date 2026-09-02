@@ -3,6 +3,7 @@ Evaluation metrics for hierarchical classification.
 
 """
 
+from collections.abc import Iterable
 from contextlib import contextmanager
 
 import numpy as np
@@ -55,10 +56,29 @@ def multi_labeled(y_true, y_pred, graph):
     node_label_mapping = {old_label: new_label for new_label, old_label in enumerate(list(mlb.classes_))}
 
     yield (
-        mlb.transform(y_true),
-        mlb.transform(y_pred),
+        mlb.transform(_as_label_sets(y_true)),
+        mlb.transform(_as_label_sets(y_pred)),
         relabel_nodes(graph, node_label_mapping),
     )
+
+
+def _as_label_sets(y):
+    """
+    Normalise targets to the iterable-of-label-sets form MultiLabelBinarizer.transform expects.
+
+    A sequence of scalar labels (e.g. a 1-D array of strings) is wrapped as one-element label
+    sets, since the binarizer would otherwise iterate over the characters of each string. The
+    encoding is decided once from the first element, so sets and lists of labels pass through
+    unchanged, and an already-binarized indicator matrix is rejected rather than misread.
+
+    """
+    if isinstance(y, np.ndarray) and y.ndim == 2:
+        raise ValueError("expected one label or a set of labels per sample, got a 2-D indicator matrix")
+
+    first = next(iter(y), None)
+    if first is None or (isinstance(first, Iterable) and not isinstance(first, str | bytes)):
+        return y
+    return [[label] for label in y]
 
 
 def fill_ancestors(y, graph, root, copy=True):
@@ -89,16 +109,18 @@ def fill_ancestors(y, graph, root, copy=True):
 
     """
     y_ = y.copy() if copy else y
+    # Nb. reverse(copy=False) returns a view, so the original graph is left untouched
     paths = all_pairs_shortest_path_length(graph.reverse(copy=False))
     for target, distances in paths:
         if target == root:
             # Our stub root node, can skip
             continue
         ix_rows = np.where(y[:, target] > 0)[0]
-        # all ancestors, except the last one which would be the root node
-        ancestors = list(distances.keys())[:-1]
+        # Every reachable node in the reversed graph is an ancestor (or the target itself);
+        # exclude the stub root explicitly rather than by its position in the BFS order,
+        # which is not last on DAGs where another ancestor is equally far from the target.
+        ancestors = [node for node in distances if node != root]
         y_[tuple(np.meshgrid(ix_rows, ancestors))] = 1
-    graph.reverse(copy=False)
     return y_
 
 
