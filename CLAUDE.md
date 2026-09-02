@@ -32,10 +32,10 @@ Row sets are unions, so a DAG node with two parents contributes its rows once to
 ancestor; on a DAG a sample under several children is repeated by index, so the input type
 (dense or sparse) is preserved at every node. Rows are chosen by label only: an all-zero
 feature row is still a training sample. The fitted model keeps no reference to the training
-data; `graph_.nodes[n]` holds only `metafeatures` and `classifier`. Multi-label (`mlb`) only
-works in raw mode: `validate_data` rejects a 2-D indicator `y` in preprocessed mode. Rolled-up
-children unknown to the binarizer give all-zero rows, which are dropped; a node left with
-none gets no classifier and a warning.
+data; `graph_.nodes[n]` holds only `metafeatures` and `classifier`. Multi-label (`mlb`) works in
+both modes: the indicator `y` is densified up front and validated with `multi_output=True`.
+Rolled-up children unknown to the binarizer give all-zero rows, which are dropped; a node
+left with none gets no classifier and a warning.
 
 **`rollup_nodes` uses a descendant map, not `all_simple_paths`.** `children_by_descendant`
 maps every strict descendant of the source to the children it lies under, so each child is

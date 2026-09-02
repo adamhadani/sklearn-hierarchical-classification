@@ -694,3 +694,28 @@ def test_local_scores_single_class_decision_function_is_not_expanded():
     clf = make_classifier(use_decision_function=True)
 
     assert_that(clf._local_scores(OneScore(), np.zeros((3, 2))).tolist(), is_(equal_to([[0.25]] * 3)))
+
+
+def test_mlb_with_preprocessed_sparse_features():
+    """Multi-label classification works on a precomputed (sparse) feature matrix with a binary
+    indicator `y`, not only in raw mode."""
+    class_hierarchy = {ROOT: ["A", "B"], "A": ["a1", "a2"], "B": ["b1", "b2"]}
+    rng = np.random.default_rng(0)
+    leaves = np.array(["a1", "a2", "b1", "b2"])[rng.integers(4, size=200)]
+    labels = [[leaf, leaf[0].upper()] for leaf in leaves]
+    mlb = MultiLabelBinarizer().fit(labels)
+    signature = {"a1": 0, "a2": 1, "b1": 2, "b2": 3}
+    X = csr_matrix(rng.random((200, 8)) * 0.1)
+    X[np.arange(200), [signature[leaf] for leaf in leaves]] = 1.0
+    clf = make_classifier(
+        base_estimator=OneVsRestClassifier(LogisticRegression()),
+        class_hierarchy=class_hierarchy,
+        mlb=mlb,
+        mlb_prediction_threshold=0.5,
+    )
+
+    clf.fit(X, csr_matrix(mlb.transform(labels)))  # sparse indicator, as e.g. fetch_rcv1 provides
+    y_pred = clf.predict(X)
+
+    assert_that(y_pred.shape, is_(equal_to((200, len(mlb.classes_)))))
+    assert_that(float((y_pred == mlb.transform(labels)).mean()), is_(close_to(1.0, delta=0.02)))
