@@ -49,6 +49,16 @@ aligned with `clf.classes_` (a binary `decision_function` returns one signed sco
 is expanded to two). Index `probs[local_class_idx]` only; never reintroduce
 mode-specific indexing in `_recursive_predict`.
 
+**Prediction scores each node once per call, in topological order.** `_predict_top_down`
+keeps an inbox of row indices per node; a node is scored in one `_local_scores` call on the
+union of rows that reached it from *all* parents, so DAGs get one call per node too
+(guarded by `test_predict_scores_each_local_classifier_once_per_call`). Only `predict_proba`
+allocates the score matrix. In multi-label mode a node's classifier may report scores for
+columns that are not its children (ancestors, siblings); those are recorded but never
+routed, which is what keeps the walk finite. A callable `stopping_criteria` is the only
+per-sample Python in prediction; it returns True to *stop*, is never consulted at the root,
+and early stopping is rejected together with `mlb` at fit time.
+
 **Single-target nodes fall back to `DummyClassifier(strategy="constant")`**, and the
 constant is wrapped as a 1-element list because scikit-learn's parameter validation
 rejects numpy scalars for `constant`.

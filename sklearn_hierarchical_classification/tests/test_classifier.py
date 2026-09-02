@@ -367,11 +367,16 @@ def test_raw_feature_extraction_with_predict_proba_pipeline():
 
 
 class RecordingLogisticRegression(LogisticRegression):
-    """Base estimator that keeps the training matrix it was fitted on, for inspection in tests."""
+    """Base estimator that keeps the training matrix it was fitted on and counts scoring calls."""
 
     def fit(self, X, y, sample_weight=None):
         self.X_fit_ = X
+        self.n_predict_proba_calls_ = 0
         return super().fit(X, y, sample_weight=sample_weight)
+
+    def predict_proba(self, X):
+        self.n_predict_proba_calls_ += 1
+        return super().predict_proba(X)
 
 
 def test_dag_shared_descendant_rows_are_not_doubled():
@@ -503,3 +508,189 @@ def test_mlb_accepts_sparse_indicator_targets():
     clf.fit(X, mlb.transform(labels))
 
     assert_that(clf.predict_proba(X).shape, is_(equal_to((len(X), len(mlb.classes_)))))
+
+
+DAG_HIERARCHY = {ROOT: ["A", "B", "C"], "A": ["1", "5"], "B": ["2", "BC.1"], "BC.1": ["3a"], "C": ["BC.1"]}
+r"""A DAG with a degenerate (single-child) path and a node with two parents:
+
+        ROOT
+       /  |  \
+      A   B   C
+     /|   |\   \
+    1 5   2 BC.1<-'
+             |
+            3a
+"""
+
+
+def make_dag_digits(as_sparse=False):
+    X, y = make_digits_dataset(targets=[1, 5, 2, 3], as_str=True)
+    y[where(y == "3")] = "3a"
+    return (csr_matrix(X) if as_sparse else X), y
+
+
+def reference_predict(clf, X):
+    """Straightforward one-sample-at-a-time top-down walk, used as an oracle for the batched
+    implementation (single-label mode, float stopping criteria)."""
+    labels, probas = [], []
+    for i in range(X.shape[0]):
+        x = X[i : i + 1]
+        node = clf.root
+        proba = np.zeros(clf.n_classes_)
+        while True:
+            local = clf.graph_.nodes[node].get(CLASSIFIER)
+            if local is None:
+                break
+            scores = clf._local_scores(local, x)[0]
+            best = int(np.argmax(scores))
+            for k, class_ in enumerate(local.classes_):
+                proba[clf.classes_.index(class_)] = scores[k]
+            stop = (
+                clf.prediction_depth == "nmlnp"
+                and isinstance(clf.stopping_criteria, float)
+                and node != clf.root
+                and scores[best] < clf.stopping_criteria
+            )
+            if stop:
+                break
+            node = local.classes_[best]
+        labels.append(node)
+        probas.append(proba)
+    return np.asarray(labels), np.asarray(probas)
+
+
+def test_predict_scores_each_local_classifier_once_per_call():
+    """Prediction is batched per node: a local classifier is asked for probabilities once per
+    predict() call, not once per sample and not once per parent on a DAG."""
+    X, y = make_dag_digits()
+    clf = make_classifier(base_estimator=RecordingLogisticRegression(max_iter=1_000), class_hierarchy=DAG_HIERARCHY)
+    clf.fit(X, y)
+
+    clf.predict(X[:60])
+
+    calls = {
+        node: attrs[CLASSIFIER].n_predict_proba_calls_
+        for node, attrs in clf.graph_.nodes(data=True)
+        if isinstance(attrs.get(CLASSIFIER), RecordingLogisticRegression)
+    }
+    assert_that(calls, is_(equal_to({ROOT: 1, "A": 1, "B": 1})))
+
+
+@pytest.mark.parametrize(
+    ("classifier_kwargs", "as_sparse"),
+    [
+        ({}, False),
+        ({}, True),
+        ({"prediction_depth": "nmlnp", "stopping_criteria": 0.9}, False),
+        ({"use_decision_function": True, "base_estimator": svm.LinearSVC()}, True),
+    ],
+)
+def test_predict_matches_per_sample_reference(classifier_kwargs, as_sparse):
+    """Batched prediction must give exactly the per-sample result on a DAG."""
+    X, y = make_dag_digits(as_sparse)
+    kwargs = {"base_estimator": LogisticRegression(max_iter=1_000), **classifier_kwargs}
+    clf = make_classifier(class_hierarchy=DAG_HIERARCHY, **kwargs)
+    clf.fit(X, y)
+
+    y_pred, y_proba = clf.predict(X), clf.predict_proba(X)
+    y_ref, proba_ref = reference_predict(clf, X)
+
+    assert_that(y_pred.tolist(), is_(equal_to(y_ref.tolist())))
+    assert_that(np.allclose(y_proba, proba_ref), is_(True))
+
+
+def test_callable_stopping_criteria_stops_when_it_returns_true():
+    # Nb. string labels throughout, since NMLNP predictions mix intermediate and leaf nodes
+    class_hierarchy = {ROOT: ["A", "B"], "A": ["1", "7"], "B": ["3", "8", "9"]}
+    X, y = make_digits_dataset(targets=[1, 7, 3, 8, 9], as_str=True)
+    seen = []
+
+    def stop_at_b(current_node, prediction, score):
+        seen.append((current_node["metafeatures"]["n_targets"], prediction, float(score)))
+        return prediction == "3"  # stop at B whenever it would descend to 3
+
+    clf = make_classifier(
+        base_estimator=LogisticRegression(max_iter=1_000),
+        class_hierarchy=class_hierarchy,
+        prediction_depth="nmlnp",
+        stopping_criteria=stop_at_b,
+    )
+    clf.fit(X, y)
+
+    y_pred = clf.predict(X)
+
+    # The criteria fires whenever B would descend to "3", so "3" is never predicted while B is
+    assert_that("3" in set(y_pred.tolist()), is_(False))
+    assert_that("B" in set(y_pred.tolist()), is_(True))
+    assert_that(len(seen) > 0, is_(True))
+
+
+def test_callable_stopping_criteria_never_stops_at_root():
+    class_hierarchy = {ROOT: ["A", "B"], "A": ["1", "7"], "B": ["3", "8", "9"]}
+    X, y = make_digits_dataset(targets=[1, 7, 3, 8, 9], as_str=True)
+    clf = make_classifier(
+        base_estimator=LogisticRegression(max_iter=1_000),
+        class_hierarchy=class_hierarchy,
+        prediction_depth="nmlnp",
+        stopping_criteria=lambda current_node, prediction, score: True,
+    )
+    clf.fit(X, y)
+
+    assert_that(set(clf.predict(X).tolist()), is_(equal_to({"A", "B"})))
+
+
+def test_mlb_predict_returns_indicator_of_visited_nodes():
+    """In multi-label mode predict() returns a binary indicator matrix over `mlb.classes_` of the
+    nodes visited on the way down (the root excluded), matching fit's `y` and predict_proba."""
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    mlb = MultiLabelBinarizer().fit(labels)
+    clf = make_classifier(
+        base_estimator=make_pipeline(CountVectorizer(), OneVsRestClassifier(LogisticRegression())),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+        mlb=mlb,
+        mlb_prediction_threshold=0.5,
+    )
+    clf.fit(X, mlb.transform(labels))
+
+    y_pred = clf.predict(X)
+
+    assert_that(y_pred.shape, is_(equal_to((len(X), len(mlb.classes_)))))
+    assert_that(y_pred[0].tolist(), is_(equal_to(mlb.transform([["fruit", "apple"]])[0].tolist())))
+    assert_that(y_pred[-1].tolist(), is_(equal_to(mlb.transform([["veg", "leek"]])[0].tolist())))
+    assert_that(clf.predict_proba(X).shape, is_(equal_to((len(X), len(mlb.classes_)))))
+
+
+def test_predict_on_empty_raw_input_returns_empty():
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    clf = make_classifier(
+        base_estimator=make_pipeline(CountVectorizer(), LogisticRegression()),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+    )
+    clf.fit(X, np.array([leaf for leaf, _ in labels]))
+
+    assert_that(clf.predict([]).shape, is_(equal_to((0,))))
+    assert_that(clf.predict_proba([]).shape, is_(equal_to((0, clf.n_classes_))))
+
+
+def test_predict_without_root_classifier_raises():
+    """If no training sample lies under the root (labels outside the hierarchy), the root has no
+    classifier; prediction must fail loudly rather than return the root sentinel as a class."""
+    clf, (X, y) = make_classifier_and_data(n_classes=3, class_hierarchy={ROOT: ["p", "q"]})
+    clf.fit(X, y)  # logs a warning: no training data under the root
+
+    with pytest.raises(ValueError, match="root"):
+        clf.predict(X)
+
+
+def test_local_scores_single_class_decision_function_is_not_expanded():
+    class OneScore:
+        classes_ = np.array(["only"])
+
+        def decision_function(self, X):
+            return np.full(X.shape[0], 0.25)
+
+    clf = make_classifier(use_decision_function=True)
+
+    assert_that(clf._local_scores(OneScore(), np.zeros((3, 2))).tolist(), is_(equal_to([[0.25]] * 3)))

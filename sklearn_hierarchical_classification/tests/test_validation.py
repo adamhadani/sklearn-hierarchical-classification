@@ -1,6 +1,7 @@
 """Test validation logic."""
 
 from hamcrest import assert_that, calling, raises
+from sklearn.preprocessing import MultiLabelBinarizer
 
 from sklearn_hierarchical_classification.tests.fixtures import make_classifier_and_data
 
@@ -43,3 +44,11 @@ def test_parameter_validation():
     for classifier_kwargs in test_cases:
         clf, (X, y) = make_classifier_and_data(**classifier_kwargs)
         assert_that(calling(clf.fit).with_args(X=X, y=y), raises(TypeError))
+
+
+def test_nmlnp_is_rejected_with_multi_label_binarizer():
+    """Early stopping is only defined for single-label prediction; with `mlb` it would be silently
+    ignored, so fit must refuse the combination."""
+    clf, (X, y) = make_classifier_and_data(prediction_depth="nmlnp", stopping_criteria=0.5, mlb=MultiLabelBinarizer())
+
+    assert_that(calling(clf.fit).with_args(X=X, y=y), raises(TypeError, "mlb"))
