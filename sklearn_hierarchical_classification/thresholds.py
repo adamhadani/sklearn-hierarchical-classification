@@ -14,7 +14,10 @@ def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT):
     ----------
     scores : array-like, shape = [n_samples, n_classes]
         Held-out (e.g. out-of-fold) scores, one column per class, as returned by
-        `HierarchicalClassifier.predict_proba` with `mlb_prediction_threshold=-np.inf`.
+        `HierarchicalClassifier.predict_proba` with `mlb_prediction_threshold=-np.inf` (which visits
+        every node learned at fit; a class without a positive example at its parent is never
+        scored and its column stays zero, which matters in cross-validation folds that drop a rare
+        class).
 
     y : array-like, shape = [n_samples, n_classes]
         Binary indicator of the true labels, columns aligned with `scores`.
@@ -48,11 +51,15 @@ def label_cardinality_threshold(scores, target_cardinality, candidates=None):
 
     """
     scores = np.asarray(scores, dtype=np.float64)
-    candidates = np.unique(scores) if candidates is None else np.asarray(candidates, dtype=np.float64)
-    # Slightly below each candidate, so that a candidate score itself counts as predicted
-    thresholds = np.nextafter(candidates, -np.inf)
-    cardinality = np.array([(scores > t).sum(axis=1).mean() for t in thresholds])
-    return float(thresholds[np.argmin(np.abs(cardinality - target_cardinality))])
+    ranked = np.sort(scores, axis=None)[::-1]  # all cells, descending
+    n_samples = scores.shape[0]
+    if candidates is None:
+        # Predicting the top k cells overall gives cardinality k / n_samples: pick k directly
+        k = int(np.clip(round(target_cardinality * n_samples), 1, ranked.size))
+        return float(np.nextafter(ranked[k - 1], -np.inf))
+    thresholds = np.nextafter(np.asarray(candidates, dtype=np.float64), -np.inf)
+    predicted = ranked.size - np.searchsorted(-ranked, -thresholds, side="right")  # cells strictly above
+    return float(thresholds[np.argmin(np.abs(predicted / n_samples - target_cardinality))])
 
 
 def best_f1_threshold(scores, y):
@@ -63,7 +70,9 @@ def best_f1_threshold(scores, y):
     order = np.argsort(-scores, kind="stable")
     ranked_scores, true_positives = scores[order], np.cumsum(y[order])
     f1 = 2 * true_positives / (np.arange(1, len(scores) + 1) + n_positive)
-    best = int(np.argmax(f1))
+    # A cut can only fall between distinct scores: tied scores are predicted together or not at all
+    last_of_tie = np.append(ranked_scores[1:] != ranked_scores[:-1], True)
+    best = int(np.argmax(np.where(last_of_tie, f1, -np.inf)))
     if best + 1 < len(ranked_scores):
         return float((ranked_scores[best] + ranked_scores[best + 1]) / 2)
     return float(np.nextafter(ranked_scores[best], -np.inf))
@@ -78,7 +87,12 @@ def _populations(y, graph, classes, root):
     column = {node: j for j, node in enumerate(classes)}
     populations = []
     for node in classes:
-        parents = [parent for parent in graph.predecessors(node) if parent != root]
+        if node not in graph:
+            # Not a hierarchy node: never scored, no threshold to tune
+            populations.append(np.empty(0, dtype=np.intp))
+            continue
+        # Children of a root (the given sentinel, or any node without parents) are tuned on every sample
+        parents = [p for p in graph.predecessors(node) if p != root and graph.in_degree(p) > 0]
         if not parents:
             populations.append(np.arange(y.shape[0]))
             continue

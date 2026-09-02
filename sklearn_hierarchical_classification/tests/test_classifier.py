@@ -36,7 +36,7 @@ from sklearn.svm import LinearSVC
 from sklearn.utils.estimator_checks import check_estimator
 
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
-from sklearn_hierarchical_classification.constants import CLASSIFIER, DEFAULT, ROOT
+from sklearn_hierarchical_classification.constants import CLASSIFIER, DEFAULT, ROOT, TRAINED_CLASSES
 from sklearn_hierarchical_classification.tests.fixtures import (
     make_classifier,
     make_classifier_and_data,
@@ -813,3 +813,79 @@ def test_mlb_child_without_training_examples_is_never_predicted():
 
     assert_that(int(y_pred[:, list(mlb.classes_).index("kiwi")].sum()), is_(equal_to(0)))
     assert_that(int(y_pred[:6, list(mlb.classes_).index("apple")].sum()) > 0, is_(True))
+
+
+def test_mlb_min_root_predictions_only_fills_in_when_too_few_children_pass():
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier()
+    columns = {label: column for column, label in enumerate(mlb.classes_)}
+    thresholds = np.zeros(len(mlb.classes_))
+    thresholds[columns["fruit"]] = np.inf  # fruit never passes on its own ...
+    thresholds[columns["veg"]] = -np.inf  # ... and veg always does, so every blurb has a root label
+    clf.set_params(mlb_prediction_threshold=thresholds, mlb_min_root_predictions=1)
+
+    clf.fit(X, y)
+    y_pred = clf.predict(X)
+
+    # fruit scores best on fruit blurbs, but they already have a root label: nothing is filled in
+    assert_that(y_pred[:, columns["fruit"]].tolist(), is_(equal_to([0] * len(X))))
+    assert_that(y_pred[:, columns["veg"]].tolist(), is_(equal_to([1] * len(X))))
+
+
+def test_mlb_predict_proba_on_dag_reports_the_score_routing_uses():
+    """A class under two parents is scored by both; predict_proba reports the maximum, which is the
+    quantity a threshold on the child is compared against (it is reached if any parent passes)."""
+    class_hierarchy = {ROOT: ["A", "B"], "A": ["a1", "shared"], "B": ["b1", "shared"]}
+    rng = np.random.default_rng(0)
+    leaves = np.array(["a1", "shared", "b1"])[rng.integers(3, size=150)]
+    labels = [[leaf, "A"] if leaf == "a1" else [leaf, "B"] if leaf == "b1" else [leaf, "A", "B"] for leaf in leaves]
+    mlb = MultiLabelBinarizer().fit(labels)
+    X = csr_matrix(rng.random((150, 6)) * 0.1)
+    X[np.arange(150), [{"a1": 0, "shared": 1, "b1": 2}[leaf] for leaf in leaves]] = 1.0
+    clf = make_classifier(
+        base_estimator=OneVsRestClassifier(LogisticRegression()),
+        class_hierarchy=class_hierarchy,
+        mlb=mlb,
+        use_decision_function=True,
+        mlb_prediction_threshold=-np.inf,
+    )
+    clf.fit(X, mlb.transform(labels))
+
+    proba = clf.predict_proba(X)
+
+    shared = list(mlb.classes_).index("shared")
+
+    def local_score(node):
+        local = clf.graph_.nodes[node][CLASSIFIER]
+        return clf._local_scores(local, X)[:, list(local.classes_).index(shared)]
+
+    assert_that(np.allclose(proba[:, shared], np.maximum(local_score("A"), local_score("B"))), is_(True))
+
+
+def test_mlb_thresholds_are_validated_at_predict_time():
+    """The tuning workflow sets thresholds with set_params after fit, so predict must validate them."""
+    clf, X, y, _ = make_fruit_veg_mlb_classifier()
+    clf.fit(X, y)
+
+    clf.set_params(mlb_prediction_threshold=[0.5, 0.5])
+    assert_that(calling(clf.predict).with_args(X), raises(ValueError, "mlb_prediction_threshold"))
+    clf.set_params(mlb_prediction_threshold=None)
+    assert_that(calling(clf.predict).with_args(X), raises(ValueError, "mlb_prediction_threshold"))
+
+
+def test_mlb_model_without_trained_classes_attribute_still_routes():
+    """Multi-label models fitted before children were recorded at fit (older pickles) keep working."""
+    clf, X, y, _ = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=0.5)
+    clf.fit(X, y)
+    for _, attrs in clf.graph_.nodes(data=True):
+        attrs.pop(TRAINED_CLASSES, None)
+
+    y_pred = clf.predict(X)
+
+    assert_that(int(y_pred.sum()) > 0, is_(True))
+
+
+def test_lcn_still_accepts_inclusive_without_mlb():
+    """`inclusive` needs `mlb` only for lcpn; the lcn strategies are validated as before."""
+    clf, (X, y) = make_classifier_and_data(algorithm="lcn", training_strategy="inclusive")
+
+    clf.fit(X, y)

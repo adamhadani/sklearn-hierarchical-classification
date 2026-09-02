@@ -38,7 +38,9 @@ class _PredictionState:
         self.last = np.full(n_samples, root, dtype=object)  # deepest node reached so far, per sample
         self.visits = []  # (node, rows) in visiting order; the root is never recorded
         self.class_proba = None if n_columns is None else np.zeros((n_samples, n_columns), dtype=np.float64)
+        self.scored = None if n_columns is None else np.zeros((n_samples, n_columns), dtype=bool)
         self.column_index = column_index
+        self.thresholds = None  # per-column prediction thresholds, multi-label mode only
 
     def columns_of(self, classes):
         """Score-matrix columns of a local classifier's classes."""
@@ -59,9 +61,13 @@ class _PredictionState:
         if self.class_proba is not None:
             self.class_proba[rows[:, None], columns] = scores
 
-    def add_scores(self, rows, columns, scores):
-        if self.class_proba is not None:
-            self.class_proba[rows[:, None], columns] += scores
+    def max_scores(self, rows, columns, scores):
+        """Record scores, keeping the highest for a cell scored by several parents (unscored cells stay 0)."""
+        if self.class_proba is None:
+            return
+        cells = (rows[:, None], columns)
+        self.class_proba[cells] = np.where(self.scored[cells], np.maximum(self.class_proba[cells], scores), scores)
+        self.scored[cells] = True
 
 
 def _rows_by_label(y, columns=None):
@@ -192,7 +198,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         For multi-label prediction tasks (when `mlb` is set to a MultiLabelBinarizer instance), the score above which
         a child node is considered predicted and descended into. Either a single threshold or one per class, in the
         order of `mlb.classes_` (e.g. per-class thresholds tuned on held-out data). Defaults to zero. To obtain the
-        scores of every node for such tuning, predict with `mlb_prediction_threshold=-np.inf`, which visits all nodes.
+        scores of every node for such tuning, predict with `mlb_prediction_threshold=-np.inf`, which visits every
+        node learned at fit.
 
     mlb_min_root_predictions : int
         For multi-label prediction tasks, the minimum number of children of the root predicted for every sample:
@@ -288,6 +295,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
         # Check that parameter assignment is consistent
         self._check_parameters()
+        if self.mlb is not None:
+            self._class_thresholds()
 
         # Initialize NetworkX Graph from input class hierarchy
         self.class_hierarchy_ = self.class_hierarchy or make_flat_hierarchy(list(np.unique(y)), root=self.root)
@@ -338,8 +347,9 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         C : array-like, shape = [n_samples, n_classes]
             The local classifier scores seen for each class along the top-down walk of each
             sample, zero for classes at nodes that were not visited. Columns follow `classes_`,
-            or `mlb.classes_` in multi-label mode (where a class under several visited parents
-            accumulates the score from each).
+            or `mlb.classes_` in multi-label mode, where each visited node contributes the scores of
+            its children and a class under several visited parents reports the highest: the
+            quantity its threshold is compared with, since it is reached if any parent passes it.
         """
         check_is_fitted(self, "graph_")
         X = self._check_predict_input(X)
@@ -362,6 +372,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         """
         n_samples = self._n_samples(X)
         state = _PredictionState(n_samples, root=self.root, n_columns=n_columns, column_index=self._column_index())
+        state.thresholds = self._class_thresholds() if self.mlb is not None else None
         if n_samples == 0:
             return state
         if CLASSIFIER not in self.graph_.nodes[self.root]:
@@ -404,16 +415,19 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
     def _descend_multi_label(self, node_id, clf, rows, scores, state):
         """Accumulate local scores and descend into every child of this node scoring above its threshold."""
         columns = state.columns_of(clf.classes_)
-        state.add_scores(rows, columns, scores)
 
-        # Only local classes that are children of this node route samples (an ancestor's or sibling's column
-        # may be among the local classes and is scored, but never followed)
-        children = set(self.graph_.successors(node_id)) & self.graph_.nodes[node_id][TRAINED_CLASSES]
+        # Only local classes that are children of this node, and were learned here, are recorded and route
+        # samples: a one-vs-rest classifier also carries (constant) predictors for every other column
+        children = set(self.graph_.successors(node_id))
+        children &= self.graph_.nodes[node_id].get(TRAINED_CLASSES, children)
         local = [local_column for local_column, column in enumerate(columns) if self.mlb.classes_[column] in children]
         child_scores = scores[:, local]
-        selected = child_scores > self._class_thresholds()[columns[local]]
-        if node_id == self.root:
-            selected |= self._top_children(child_scores, self.mlb_min_root_predictions)
+        state.max_scores(rows, columns[local], child_scores)
+        selected = child_scores > state.thresholds[columns[local]]
+        if node_id == self.root and self.mlb_min_root_predictions:
+            # Samples with too few root labels get their best-scoring children regardless of thresholds
+            short = selected.sum(axis=1) < self.mlb_min_root_predictions
+            selected[short] |= self._top_children(child_scores[short], self.mlb_min_root_predictions)
 
         next_nodes = []
         for k, local_column in enumerate(local):
@@ -434,9 +448,18 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         return top
 
     def _class_thresholds(self):
-        """One prediction threshold per `mlb.classes_` column."""
-        thresholds = np.asarray(self.mlb_prediction_threshold, dtype=np.float64)
-        return np.broadcast_to(thresholds, (len(self.mlb.classes_),))
+        """One prediction threshold per `mlb.classes_` column, validated (thresholds may be set after fit)."""
+        try:
+            thresholds = np.asarray(self.mlb_prediction_threshold, dtype=np.float64)
+        except (TypeError, ValueError):
+            raise ValueError("'mlb_prediction_threshold' must be a float or a 1-D array-like of floats") from None
+        n_classes = len(self.mlb.classes_)
+        if thresholds.ndim > 1 or np.isnan(thresholds).any() or (thresholds.ndim == 1 and len(thresholds) != n_classes):
+            raise ValueError(
+                f"'mlb_prediction_threshold' must be a float or one threshold per class ({n_classes}, in the order "
+                f"of mlb.classes_); got shape {thresholds.shape}"
+            )
+        return np.broadcast_to(thresholds, (n_classes,))
 
     def _visits_as_indicator(self, state, n_samples):
         indicator = np.zeros((n_samples, len(self.mlb.classes_)), dtype=int)
@@ -583,11 +606,12 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         if not is_leaf:
             self.graph_.nodes[node_id][METAFEATURES] = self._build_metafeatures(y[subtree_rows])
 
-        # "inclusive": every other document joins the training set as a negative for all children
-        rows = np.arange(y.shape[0]) if self._is_inclusive and len(subtree_rows) else subtree_rows
-        y_rows = y[rows]
-        X_ = self._select_features(X=self._rows(X, rows), y=y_rows)
-        X_, y_ = self._roll_up(X_, y_rows, child_of)
+        if self._is_inclusive and len(subtree_rows):
+            # Every other document joins the training set as an all-negative row
+            X_, y_ = self._select_features(X=X, y=y), self._inclusive_targets(y, subtree_rows, child_of)
+        else:
+            X_ = self._select_features(X=self._rows(X, subtree_rows), y=y[subtree_rows])
+            X_, y_ = self._roll_up(X_, y[subtree_rows], child_of)
         if self._n_samples(X_) == 0:
             # No training data could be materialized for current node
             # TODO: support a "strict" mode flag to explicitly enable/disable fallback logic here?
@@ -622,6 +646,13 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
                 f"Local classifier at node {node_id!r} predicts classes {unknown} that are not hierarchy nodes"
             )
 
+    def _inclusive_targets(self, y, subtree_rows, child_of):
+        """Indicator targets over every sample: the subtree's roll-up, zero rows elsewhere."""
+        y_ = np.zeros((y.shape[0], len(self.mlb.classes_)), dtype=int)
+        rolled_up = self.mlb.transform(rollup_targets(child_of, y[subtree_rows], mlb=self.mlb))
+        y_[subtree_rows] = rolled_up.toarray() if issparse(rolled_up) else rolled_up
+        return y_
+
     def _roll_up(self, X_, y_rows, child_of):
         """
         Turn each sample's target into the child (or children) of the current node it lies under.
@@ -649,9 +680,6 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         y_ = self.mlb.transform(rollup_targets(child_of, y_rows, mlb=self.mlb))
         if issparse(y_):
             y_ = y_.toarray()
-        if self._is_inclusive:
-            # All-zero rows are the out-of-subtree negatives this strategy is about
-            return X_, y_
         # Drop samples whose rolled-up children are unknown to the binarizer (all-zero rows)
         keep = np.flatnonzero(y_.sum(axis=1) > 0)
         if len(keep) < y_.shape[0]:
@@ -660,7 +688,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
     @property
     def _is_inclusive(self):
-        return self.training_strategy == "inclusive"
+        return self.algorithm == "lcpn" and self.training_strategy == "inclusive"
 
     def _local_classifier_for(self, node_id, y_):
         """The estimator to fit at a node: the base estimator, or a constant predictor when the

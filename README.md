@@ -98,6 +98,9 @@ clf = HierarchicalClassifier(
   the nodes visited by each sample, matching the `y` passed to `fit` and the columns of
   `predict_proba()`. It previously returned an array of root-prefixed node paths with duplicated entries.
   `predict_proba()` in that mode is now sized by `mlb.classes_`.
+- On a DAG, `predict_proba()` in multi-label mode reports for a class under several visited parents the
+  highest of its local scores (previously their sum), which is the quantity its prediction threshold is
+  compared with.
 - Early stopping (`prediction_depth="nmlnp"` / `stopping_criteria`) is rejected together with `mlb`; it
   was silently ignored before. A callable `stopping_criteria` returns True to stop (the code always
   behaved this way; the docstring said the opposite) and is no longer consulted at the root.

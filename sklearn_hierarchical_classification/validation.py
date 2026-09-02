@@ -40,7 +40,7 @@ class ParameterValidator:
                 outside the subtree are added as negatives)."""
             )
 
-        if self.training_strategy == "inclusive" and self.mlb is None:
+        if self.algorithm == "lcpn" and self.training_strategy == "inclusive" and self.mlb is None:
             raise TypeError(
                 """'training_strategy' "inclusive" requires 'mlb': out-of-subtree documents are negatives for
                 every child, which only a multi-label (indicator) local classifier can express."""
@@ -79,19 +79,6 @@ class ParameterValidator:
             raise TypeError(
                 """Early stopping ('prediction_depth' set to "nmlnp" or a 'stopping_criteria') is only defined
                 for single-label prediction and cannot be combined with 'mlb'."""
-            )
-
-        if self.mlb is not None and np.ndim(self.mlb_prediction_threshold) not in (0, 1):
-            raise ValueError("'mlb_prediction_threshold' must be a float or a 1-D array-like of per-class thresholds.")
-
-        if (
-            self.mlb is not None
-            and np.ndim(self.mlb_prediction_threshold) == 1
-            and len(self.mlb_prediction_threshold) != len(self.mlb.classes_)
-        ):
-            raise ValueError(
-                f"'mlb_prediction_threshold' has {len(self.mlb_prediction_threshold)} entries but 'mlb' has "
-                f"{len(self.mlb.classes_)} classes; give one threshold per class in the order of mlb.classes_."
             )
 
         if not isinstance(self.mlb_min_root_predictions, int | np.integer) or self.mlb_min_root_predictions < 0:

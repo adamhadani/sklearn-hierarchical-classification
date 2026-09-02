@@ -1,11 +1,14 @@
 """Unit-tests for the decision-threshold tuning helpers."""
 
+import time
+
 import numpy as np
 from hamcrest import assert_that, close_to, equal_to, is_
 from networkx import DiGraph
 
 from sklearn_hierarchical_classification.constants import ROOT
 from sklearn_hierarchical_classification.thresholds import (
+    best_f1_threshold,
     label_cardinality_threshold,
     scut_thresholds,
 )
@@ -74,3 +77,47 @@ def test_label_cardinality_threshold_matches_target_cardinality():
         (scores > label_cardinality_threshold(scores, target_cardinality=2.0)).sum(1).mean(),
         is_(close_to(2.0, delta=0.01)),
     )
+
+
+def test_best_f1_threshold_keeps_tied_positives():
+    scores = np.array([0.9, 0.5, 0.5, 0.1])
+    y = np.array([1, 1, 0, 0])
+
+    threshold = best_f1_threshold(scores, y)
+
+    assert_that((scores > threshold).tolist(), is_(equal_to([True, True, True, False])))
+
+
+def test_scut_thresholds_ignore_classes_missing_from_the_hierarchy():
+    graph = DiGraph([(ROOT, "A"), (ROOT, "B")])
+    scores = np.array([[0.9, 0.1, 0.5], [0.2, 0.8, 0.5]])
+    y = np.array([[1, 0, 0], [0, 1, 0]])
+
+    thresholds = scut_thresholds(scores, y, graph=graph, classes=["A", "B", "zzz"])
+
+    assert_that(np.isinf(thresholds[2]), is_(True))
+    assert_that(0.2 < thresholds[0] < 0.9, is_(True))
+
+
+def test_scut_thresholds_treat_any_in_degree_zero_node_as_a_root():
+    """A hierarchy rooted at a custom node: its children are tuned on all samples, not only on the
+    samples carrying some label."""
+    graph = DiGraph([("top", "A"), ("top", "B")])
+    scores = np.array([[0.9, 0.1], [0.2, 0.1], [0.3, 0.1]])
+    y = np.array([[1, 0], [0, 0], [0, 0]])
+
+    thresholds = scut_thresholds(scores, y, graph=graph, classes=["A", "B"])
+
+    assert_that(0.5 < thresholds[0] < 0.7, is_(True))  # midpoint of 0.9 and 0.3: the unlabeled rows count
+
+
+def test_label_cardinality_threshold_is_fast_on_distinct_scores():
+    """All-distinct scores (e.g. SVM decision values) must not turn every cell into a candidate."""
+    rng = np.random.default_rng(0)
+    scores = rng.normal(size=(2_000, 50))
+
+    start = time.perf_counter()
+    threshold = label_cardinality_threshold(scores, target_cardinality=3.0)
+
+    assert_that(time.perf_counter() - start < 2.0, is_(True))
+    assert_that((scores > threshold).sum(1).mean(), is_(close_to(3.0, delta=0.01)))
