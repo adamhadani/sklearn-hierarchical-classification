@@ -175,4 +175,4 @@ def nnz_rows_ix(X):
 
 def nnz_columns_count(X):
     """Return count of columns which have at least one non-zero value."""
-    return len(np.count_nonzero(X, axis=0))
+    return int(np.count_nonzero(np.count_nonzero(X, axis=0)))
