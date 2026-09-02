@@ -74,11 +74,13 @@ def make_hierarchical(graph, mlb, C, threshold=0.0):
 
 def tuned_thresholds(graph, mlb, C, X, y, n_folds=5):
     """Per-class SCut thresholds from out-of-fold all-node scores on the training set."""
-    scores = np.zeros(y.shape)
+    scores, scored = np.zeros(y.shape), np.zeros(y.shape, dtype=bool)
     for fit_rows, score_rows in KFold(n_folds, shuffle=True, random_state=0).split(X):
         clf = make_hierarchical(graph, mlb, C, threshold=-np.inf).fit(X[fit_rows], y[fit_rows])
         scores[score_rows] = clf.predict_proba(X[score_rows])
-    return scut_thresholds(scores, y, graph=graph, classes=mlb.classes_)
+        # A class without positives in this fold's training part is not learned, hence not scored
+        scored[score_rows] = y[fit_rows].any(axis=0)
+    return scut_thresholds(scores, y, graph=graph, classes=mlb.classes_, scored=scored)
 
 
 def timed(fn, *args):

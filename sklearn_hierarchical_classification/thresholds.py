@@ -6,7 +6,7 @@ from networkx import descendants
 from sklearn_hierarchical_classification.constants import ROOT
 
 
-def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT):
+def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT, scored=None):
     """
     Per-class decision thresholds maximising F1 on held-out scores (SCut, Yang 1999).
 
@@ -31,6 +31,12 @@ def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT):
     classes : sequence, optional
         The hierarchy node of each column of `scores` (e.g. `mlb.classes_`); required with `graph`.
 
+    scored : array-like of bool, shape = [n_samples, n_classes], optional
+        Which cells of `scores` were actually produced. Cells never scored keep a zero placeholder
+        (e.g. a class with no positive example in a cross-validation fold's training part is not
+        learned there, so the fold's held-out rows carry no score for it) and are excluded from
+        that class's tuning.
+
     Returns
     -------
     thresholds : ndarray, shape = [n_classes]
@@ -38,8 +44,12 @@ def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT):
 
     """
     scores, y = np.asarray(scores, dtype=np.float64), np.asarray(y)
-    population = _populations(y, graph, classes, root)
-    return np.array([best_f1_threshold(scores[rows, j], y[rows, j]) for j, rows in enumerate(population)])
+    scored = np.ones(scores.shape, dtype=bool) if scored is None else np.asarray(scored, dtype=bool)
+    thresholds = []
+    for j, rows in enumerate(_populations(y, graph, classes, root)):
+        rows = rows[scored[rows, j]]
+        thresholds.append(best_f1_threshold(scores[rows, j], y[rows, j]))
+    return np.array(thresholds)
 
 
 def label_cardinality_threshold(scores, target_cardinality, candidates=None):

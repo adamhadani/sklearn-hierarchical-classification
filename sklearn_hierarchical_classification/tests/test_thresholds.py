@@ -121,3 +121,17 @@ def test_label_cardinality_threshold_is_fast_on_distinct_scores():
 
     assert_that(time.perf_counter() - start < 2.0, is_(True))
     assert_that((scores > threshold).sum(1).mean(), is_(close_to(3.0, delta=0.01)))
+
+
+def test_scut_thresholds_ignore_unscored_cells():
+    """Cells that were never scored (e.g. a class absent from a CV fold's training part, so its
+    held-out rows keep the zero placeholder) must not take part in that class's tuning."""
+    scores = np.array([[0.9], [0.2], [0.1], [0.0], [0.0], [0.0]])
+    y = np.array([[1], [0], [0], [1], [1], [1]])
+    scored = np.array([[True], [True], [True], [False], [False], [False]])
+
+    with_mask = scut_thresholds(scores, y, scored=scored)
+    without_mask = scut_thresholds(scores, y)
+
+    assert_that(0.2 < with_mask[0] < 0.9, is_(True))  # tuned on the three scored rows
+    assert_that(without_mask[0] < 0.0, is_(True))  # the zero-scored positives drag the cut below the zeros
