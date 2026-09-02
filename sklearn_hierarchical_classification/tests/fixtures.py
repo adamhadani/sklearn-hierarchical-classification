@@ -2,6 +2,7 @@
 Unit-test fixtures and factory methods.
 
 """
+
 from itertools import product
 
 import numpy as np
@@ -104,20 +105,10 @@ def make_digits_dataset(targets=None, as_str=True):
 
 
 def make_classifier(base_estimator=None, class_hierarchy=None, **kwargs):
-    return HierarchicalClassifier(
-        class_hierarchy=class_hierarchy,
-        base_estimator=base_estimator,
-        **kwargs
-    )
+    return HierarchicalClassifier(class_hierarchy=class_hierarchy, base_estimator=base_estimator, **kwargs)
 
 
-def make_classifier_and_data(
-    n_classes=10,
-    n_samples=1000,
-    n_features=10,
-    class_hierarchy=None,
-    **classifier_kwargs
-):
+def make_classifier_and_data(n_classes=10, n_samples=1000, n_features=10, class_hierarchy=None, **classifier_kwargs):
     """Create a classifier as well as a synthetic dataset, with optional support for
     user-specific class hierarchy.
 
@@ -129,14 +120,11 @@ def make_classifier_and_data(
     )
 
     class_hierarchy = class_hierarchy or make_class_hierarchy(
-        n=n_classes+1,
+        n=n_classes + 1,
         n_intermediate=0,
     )
 
-    clf = make_classifier(
-        class_hierarchy=class_hierarchy,
-        **classifier_kwargs
-    )
+    clf = make_classifier(class_hierarchy=class_hierarchy, **classifier_kwargs)
 
     return clf, (X, y)
 
@@ -162,15 +150,12 @@ def make_mlb_classifier_and_data_with_feature_extraction_pipeline():
         use_idf=True,
         smooth_idf=True,
         sublinear_tf=True,
-        max_features=70000
+        max_features=70000,
     )
     binary_clf = OneVsRestClassifier(LinearSVC())
     base_estimator = make_pipeline(vectorizer, binary_clf)
 
-    labels = [
-        [names[target]] + [names[target].split(".")[0]]
-        for target in Y
-    ]
+    labels = [[names[target]] + [names[target].split(".")[0]] for target in Y]
     mlb = MultiLabelBinarizer()
     y = mlb.fit_transform(labels)
 
@@ -179,7 +164,7 @@ def make_mlb_classifier_and_data_with_feature_extraction_pipeline():
         class_hierarchy=class_hierarchy,
         feature_extraction="raw",
         mlb=mlb,
-        use_decision_function=True
+        use_decision_function=True,
     )
 
     return clf, (X, y)

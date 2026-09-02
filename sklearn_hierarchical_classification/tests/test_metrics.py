@@ -1,8 +1,9 @@
 """Unit-tests for the evaluation metrics module."""
+
+import pytest
 from hamcrest import assert_that, close_to, is_
 from inflect import engine
 from networkx import DiGraph, relabel_nodes
-from parameterized import parameterized
 
 from sklearn_hierarchical_classification.constants import ROOT
 from sklearn_hierarchical_classification.metrics import (
@@ -35,25 +36,23 @@ def graph_fixture(as_str=False):
 
     """
     G = DiGraph()
-    G.add_edges_from([
-        (ROOT, 0),
-        (ROOT, 1),
-        (1, 2),
-        (1, 3),
-        (2, 4),
-        (2, 5),
-        (5, 6),
-    ])
+    G.add_edges_from(
+        [
+            (ROOT, 0),
+            (ROOT, 1),
+            (1, 2),
+            (1, 3),
+            (2, 4),
+            (2, 5),
+            (5, 6),
+        ]
+    )
 
     if as_str:
         inflect_engine = engine()
         relabel_nodes(
             G,
-            {
-                node_id: inflect_engine.number_to_words(node_id)
-                for node_id in G.nodes()
-                if node_id != ROOT
-            },
+            {node_id: inflect_engine.number_to_words(node_id) for node_id in G.nodes() if node_id != ROOT},
             copy=False,
         )
 
@@ -77,7 +76,6 @@ METRICS_TEST_CASES = [
         0.5,
         0.4,
     ),
-
     # Test metrics for multiple instances (labeled datapoints)
     # y_true: [[4], [3]]
     # y_pred: [[3], [4]]
@@ -141,7 +139,10 @@ METRICS_TEST_CASES = [
 ]
 
 
-@parameterized(METRICS_TEST_CASES)
+@pytest.mark.parametrize(
+    ("graph", "y_true", "y_pred", "expected_hr_score", "expected_hp_score", "expected_hf1_score"),
+    METRICS_TEST_CASES,
+)
 def test_h_scores(graph, y_true, y_pred, expected_hr_score, expected_hp_score, expected_hf1_score):
     """Test the hR, hP, hF1 metrics on a few synthetic data test cases."""
     with multi_labeled(y_true, y_pred, graph) as (y_true_, y_pred_, graph_):

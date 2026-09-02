@@ -1,32 +1,62 @@
 # sklearn-hierarchical-classification
 
-![PyPI](https://img.shields.io/pypi/v/sklearn-hierarchical-classification) [![CircleCI](https://circleci.com/gh/globality-corp/sklearn-hierarchical-classification.svg?style=svg&circle-token=6d5d6914ea5a5e2ad92cde6a8166bf25b229ad6a)](https://circleci.com/gh/globality-corp/sklearn-hierarchical-classification)
+[![CI](https://github.com/adamhadani/sklearn-hierarchical-classification/actions/workflows/ci.yml/badge.svg)](https://github.com/adamhadani/sklearn-hierarchical-classification/actions/workflows/ci.yml)
+[![PyPI - Version](https://img.shields.io/pypi/v/sklearn-hierarchical-classification)](https://pypi.org/project/sklearn-hierarchical-classification/)
+[![PyPI - Python Version](https://img.shields.io/pypi/pyversions/sklearn-hierarchical-classification)](https://pypi.org/project/sklearn-hierarchical-classification/)
+[![License](https://img.shields.io/github/license/adamhadani/sklearn-hierarchical-classification)](./LICENSE)
 
 Hierarchical classification module based on scikit-learn's interfaces and conventions.
+
+`HierarchicalClassifier` is a scikit-learn compatible meta-estimator that fits a "local classifier per
+parent node" over a class hierarchy given as a tree or DAG (a `networkx.DiGraph` or an adjacency dict),
+and predicts by walking the hierarchy top-down. It supports mandatory and non-mandatory leaf-node
+prediction (early stopping), multi-label targets via `MultiLabelBinarizer`, per-node base estimators,
+and a "raw" feature-extraction mode where the base estimator is a full `Pipeline` operating on raw
+inputs such as text. Hierarchical precision/recall/F-beta metrics are provided in
+`sklearn_hierarchical_classification.metrics`.
 
 See the GitHub Pages hosted documentation [here](http://code.globality.com/sklearn-hierarchical-classification/).
 
 
 ## Installation
 
-To install, simply install this package via pip into your desired virtualenv, e.g:
+Requires Python 3.11+.
 
     pip install sklearn-hierarchical-classification
+
+Or with [uv](https://docs.astral.sh/uv/):
+
+    uv add sklearn-hierarchical-classification
 
 
 ## Usage
 
-See [examples/](./examples/) for usage examples.
+```python
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.svm import SVC
 
+from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
+from sklearn_hierarchical_classification.constants import ROOT
 
-## Testing
+# A two-level hierarchy over the digits 1, 3, 7, 8, 9. Intermediate nodes ("A", "B") are
+# arbitrary labels; the (artificial) root is the framework-provided ROOT constant.
+class_hierarchy = {
+    ROOT: ["A", "B"],
+    "A": ["1", "7"],
+    "B": ["3", "8", "9"],
+}
 
-To run the included unit-tests, install the test dependencies and then invoke using `nose`:
+clf = HierarchicalClassifier(
+    base_estimator=CalibratedClassifierCV(SVC(gamma=0.001), ensemble=False),
+    class_hierarchy=class_hierarchy,
+)
+clf.fit(X_train, y_train)  # y_train holds leaf labels, e.g. "1", "7", ...
+y_pred = clf.predict(X_test)
+```
 
-    pip install -e '.[test]'
-    pip install nose
-    nosetests
-
+The base estimator must expose `predict_proba` (or `decision_function`, when
+`use_decision_function=True`). See [examples/](./examples/) for a complete, runnable example that also
+demonstrates the hierarchical evaluation metrics.
 
 ### Jupyter notebooks
 
@@ -43,6 +73,30 @@ clf = HierarchicalClassifier(
     progress_wrapper=tqdm_notebook,
 )
 ```
+
+
+## Development
+
+The project is managed with [uv](https://docs.astral.sh/uv/). All tooling configuration lives in
+`pyproject.toml`; linting, formatting, type-checking and tests are enforced through
+[pre-commit](https://pre-commit.com/) both locally and in CI.
+
+    uv sync --dev                       # create .venv and install the package + dev tools
+    uv run pre-commit install           # run the hooks on every commit
+
+    uv run pytest                       # full test suite (includes the slow, dataset-downloading tests)
+    uv run pytest -m "not slow"         # what the pre-commit hook runs
+    uv run pre-commit run --all-files   # everything CI enforces: ruff, mypy, hygiene hooks, tests
+
+
+## Releasing
+
+Versions are derived from git tags by [setuptools-scm](https://github.com/pypa/setuptools-scm); there
+is no version string to bump in the tree. Pushing a tag builds the distributions, publishes them to
+PyPI via trusted publishing, and creates a GitHub Release:
+
+    git tag 1.4.0
+    git push origin 1.4.0
 
 
 ## Documentation

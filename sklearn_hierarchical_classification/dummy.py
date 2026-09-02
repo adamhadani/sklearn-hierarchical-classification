@@ -1,8 +1,7 @@
 """Dummy objects."""
 
 
-class DummyProgress(object):
-
+class DummyProgress:
     def __enter__(self):
         return self
 

@@ -1,4 +1,5 @@
 """Helpers for workings with sequences and (numpy) arrays."""
+
 from itertools import chain
 
 import numpy as np
@@ -17,10 +18,8 @@ def apply_along_rows(func, X):
 
     """
     if issparse(X):
-        return np.array([
-            func(X.getrow(i))
-            for i in range(X.shape[0])
-        ])
+        # Nb. slice rather than index so that the row stays 2-D for both sparse matrices and sparse arrays
+        return np.array([func(X[i : i + 1]) for i in range(X.shape[0])])
     else:
         # XXX might break vis-a-vis this issue merging: https://github.com/numpy/numpy/pull/8511
         # See discussion over issue with truncated string when using np.apply_along_axis here:
@@ -59,7 +58,7 @@ def apply_rollup_Xy(X, y):
         # Performance improvements require csr matrix
         X = csr_matrix(X)
 
-    indptr = np.zeros((n_rows+1), dtype=np.int32)
+    indptr = np.zeros((n_rows + 1), dtype=np.int32)
     indices = []
     data = []
 
@@ -71,12 +70,12 @@ def apply_rollup_Xy(X, y):
     for i, labelset in enumerate(y):
         labelset_sz = len(labelset)
         for j in range(labelset_sz):
-            indptr[offset+j] = indices_count
+            indptr[offset + j] = indices_count
 
-            indices.append(X.indices[X.indptr[i]:X.indptr[i+1]])
-            data.append(X.data[X.indptr[i]:X.indptr[i+1]])
+            indices.append(X.indices[X.indptr[i] : X.indptr[i + 1]])
+            data.append(X.data[X.indptr[i] : X.indptr[i + 1]])
 
-            indices_count += len(X.data[X.indptr[i]:X.indptr[i+1]])
+            indices_count += len(X.data[X.indptr[i] : X.indptr[i + 1]])
 
         offset += labelset_sz
 
@@ -107,17 +106,15 @@ def apply_rollup_Xy_raw(X, y):
     # Compute number of rows we will have after transformation
     n_rows = sum(len(labelset) for labelset in y)
 
-    if n_rows == X.shape[0]:
+    if n_rows == len(X):
         # No expansion needed
         return X, flatten_list(y)
 
     # Our goal is to expand the equal labelsets into their own row within X
     # We do this by repeating each row exactly "labelset" times
     X_rows = []
-    for i, labelset in enumerate(y):
-        labelset_sz = len(labelset)
-        for j in range(labelset_sz):
-            X_rows.append(X[j])
+    for x, labelset in zip(X, y, strict=True):
+        X_rows.extend([x] * len(labelset))
 
     y_ = flatten_list(y)
     return X_rows, y_
@@ -156,9 +153,9 @@ def extract_rows_csr(matrix, rows):
         indptr[i] = indices_count
 
         if i in rows:
-            indices.append(matrix.indices[matrix.indptr[i]:matrix.indptr[i+1]])
-            data.append(matrix.data[matrix.indptr[i]:matrix.indptr[i+1]])
-            indices_count += len(matrix.data[matrix.indptr[i]:matrix.indptr[i+1]])
+            indices.append(matrix.indices[matrix.indptr[i] : matrix.indptr[i + 1]])
+            data.append(matrix.data[matrix.indptr[i] : matrix.indptr[i + 1]])
+            indices_count += len(matrix.data[matrix.indptr[i] : matrix.indptr[i + 1]])
 
     indptr[-1] = indices_count
 

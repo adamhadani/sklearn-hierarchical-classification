@@ -2,6 +2,8 @@
 Unit-tests for the classifier interface.
 
 """
+
+import pytest
 from hamcrest import (
     assert_that,
     close_to,
@@ -14,6 +16,7 @@ from hamcrest import (
 from networkx import DiGraph
 from numpy import where
 from sklearn import svm
+from sklearn.calibration import CalibratedClassifierCV
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 from sklearn.model_selection import train_test_split
@@ -78,9 +81,10 @@ def test_trivial_hierarchy_classification():
     y_pred = clf.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
 
-    assert_that(accuracy, is_(close_to(1., delta=0.05)))
+    assert_that(accuracy, is_(close_to(1.0, delta=0.05)))
 
 
+@pytest.mark.slow
 def test_mlb_hierarchy_classification_with_feature_extraction_pipeline():
     """Test multi-label classification with a feature extraction pipeline"""
     clf, (X, y) = make_mlb_classifier_and_data_with_feature_extraction_pipeline()
@@ -97,7 +101,7 @@ def test_mlb_hierarchy_classification_with_feature_extraction_pipeline():
     y_pred[where(y_pred == 0)] = -1
     accuracy = accuracy_score(y_test, y_pred > -0.2)
 
-    assert_that(accuracy, is_(close_to(.8, delta=0.05)))
+    assert_that(accuracy, is_(close_to(0.8, delta=0.05)))
 
 
 def test_base_estimator_as_dict():
@@ -110,7 +114,7 @@ def test_base_estimator_as_dict():
     clf = make_classifier(
         base_estimator={
             ROOT: KNeighborsClassifier(),
-            "B": svm.SVC(probability=True),
+            "B": svm.SVC(),
             DEFAULT: MultinomialNB(),
         },
         class_hierarchy=class_hierarchy,
@@ -119,7 +123,7 @@ def test_base_estimator_as_dict():
         targets=[1, 7, 3, 8, 9],
         as_str=False,
     )
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train, _X_test, y_train, _y_test = train_test_split(
         X,
         y,
         test_size=0.2,
@@ -151,11 +155,7 @@ def test_nontrivial_hierarchy_leaf_classification():
         "A": [1, 7],
         "B": [3, 8, 9],
     }
-    base_estimator = svm.SVC(
-        gamma=0.001,
-        kernel="rbf",
-        probability=True
-    )
+    base_estimator = CalibratedClassifierCV(svm.SVC(gamma=0.001, kernel="rbf"), ensemble=False)
     clf = make_classifier(
         base_estimator=base_estimator,
         class_hierarchy=class_hierarchy,
@@ -175,7 +175,7 @@ def test_nontrivial_hierarchy_leaf_classification():
     y_pred = clf.predict(X_test)
     accuracy = accuracy_score(y_test, y_pred)
 
-    assert_that(accuracy, is_(close_to(1., delta=0.02)))
+    assert_that(accuracy, is_(close_to(1.0, delta=0.02)))
 
 
 def test_intermediate_node_training_data():
@@ -194,7 +194,6 @@ def test_intermediate_node_training_data():
     base_estimator = LogisticRegression(
         solver="lbfgs",
         max_iter=1_000,
-        multi_class="multinomial",
     )
 
     clf = HierarchicalClassifier(
@@ -217,11 +216,7 @@ def test_nmlnp_strategy_with_float_stopping_criteria():
         "A": ["1", "5", "6", "7"],
         "B": ["2", "3", "4", "8", "9"],
     }
-    base_estimator = svm.SVC(
-        gamma=0.001,
-        kernel="rbf",
-        probability=True
-    )
+    base_estimator = CalibratedClassifierCV(svm.SVC(gamma=0.001, kernel="rbf"), ensemble=False)
     clf = make_classifier(
         base_estimator=base_estimator,
         class_hierarchy=class_hierarchy,
@@ -230,7 +225,7 @@ def test_nmlnp_strategy_with_float_stopping_criteria():
     )
 
     X, y = make_digits_dataset()
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train, X_test, y_train, _y_test = train_test_split(
         X,
         y,
         test_size=0.2,
@@ -254,11 +249,7 @@ def test_nmlnp_strategy_on_tree_with_dummy_classifier():
         "B": ["2", "3", "8", "9"],
         "C": ["4"],
     }
-    base_estimator = svm.SVC(
-        gamma=0.001,
-        kernel="rbf",
-        probability=True
-    )
+    base_estimator = CalibratedClassifierCV(svm.SVC(gamma=0.001, kernel="rbf"), ensemble=False)
     clf = make_classifier(
         base_estimator=base_estimator,
         class_hierarchy=class_hierarchy,
@@ -267,7 +258,7 @@ def test_nmlnp_strategy_on_tree_with_dummy_classifier():
     )
 
     X, y = make_digits_dataset()
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train, X_test, y_train, _y_test = train_test_split(
         X,
         y,
         test_size=0.2,
@@ -299,11 +290,7 @@ def test_nmlnp_strategy_on_dag_with_dummy_classifier():
         "BC.1": ["3a"],
         "C": ["BC.1"],
     }
-    base_estimator = svm.SVC(
-        gamma=0.001,
-        kernel="rbf",
-        probability=True
-    )
+    base_estimator = CalibratedClassifierCV(svm.SVC(gamma=0.001, kernel="rbf"), ensemble=False)
     clf = make_classifier(
         base_estimator=base_estimator,
         class_hierarchy=class_hierarchy,
@@ -313,7 +300,7 @@ def test_nmlnp_strategy_on_dag_with_dummy_classifier():
 
     X, y = make_digits_dataset()
     y[where(y == "3")] = "3a"
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train, X_test, y_train, _y_test = train_test_split(
         X,
         y,
         test_size=0.2,

@@ -1,0 +1,127 @@
+[build-system]
+requires = ["setuptools>=80", "setuptools-scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sklearn-hierarchical-classification"
+description = "Hierarchical classification interface extensions for scikit-learn"
+readme = "README.md"
+requires-python = ">=3.11"
+authors = [
+    { name = "Adam Ever-Hadani", email = "adamhadani@gmail.com" },
+    { name = "Globality Engineering", email = "engineering@globality.com" },
+]
+maintainers = [
+    { name = "Adam Ever-Hadani", email = "adamhadani@gmail.com" },
+]
+license = "Apache-2.0"
+license-files = ["LICEN[CS]E*"]
+keywords = ["scikit-learn", "hierarchical-classification", "machine-learning", "taxonomy"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3 :: Only",
+]
+dependencies = [
+    "networkx>=3.4",
+    "numpy>=2.0",
+    "scikit-learn>=1.6",
+    "scipy>=1.14",
+]
+dynamic = ["version"]
+
+[project.urls]
+Homepage = "https://github.com/adamhadani/sklearn-hierarchical-classification"
+Documentation = "http://code.globality.com/sklearn-hierarchical-classification/"
+Issues = "https://github.com/adamhadani/sklearn-hierarchical-classification/issues"
+
+[dependency-groups]
+dev = [
+    "inflect>=7.0",
+    "mypy>=1.15",
+    "pre-commit>=4.0",
+    "pyhamcrest>=2.1",
+    "pytest>=8.0",
+    "pytest-cov>=6.0",
+    "ruff>=0.11",
+]
+
+[tool.setuptools]
+# Nb. keep this off: with setuptools-scm's file finder, the default (true) would pull the
+# git-tracked files under the excluded tests subpackage back into the wheel as package data.
+include-package-data = false
+
+[tool.setuptools.packages.find]
+include = ["sklearn_hierarchical_classification*"]
+exclude = ["sklearn_hierarchical_classification.tests*"]
+
+[tool.setuptools_scm]
+# Version is derived from git tags (e.g. `1.4.0`); presence of this table enables setuptools-scm.
+
+[tool.pytest.ini_options]
+testpaths = ["sklearn_hierarchical_classification/tests"]
+markers = [
+    "slow: tests that download datasets or take more than a few seconds (deselect with '-m \"not slow\"')",
+]
+filterwarnings = [
+    "error::DeprecationWarning:sklearn_hierarchical_classification",
+    "error::FutureWarning:sklearn_hierarchical_classification",
+]
+
+[tool.coverage.run]
+branch = true
+source = ["sklearn_hierarchical_classification"]
+omit = ["sklearn_hierarchical_classification/tests/*"]
+
+[tool.coverage.report]
+show_missing = true
+
+[tool.mypy]
+namespace_packages = true
+ignore_missing_imports = true
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.format]
+quote-style = "double"
+
+[tool.ruff.lint]
+ignore = [
+    "T201",  # allow print statement
+]
+# `extend-select` layers these on top of ruff's default rule set rather than replacing it.
+extend-select = [
+    "A",  # flake8-builtins
+    "B",  # flake8-bugbear
+    "E",  # pycodestyle (incl. E501 line-too-long, not a default rule)
+    "F",  # Pyflakes
+    "G",  # flake8-logging-format
+    "I",  # isort
+    "PERF",  # perflint
+    "PLC",  # Pylint (Convention)
+    "SIM",  # flake8-simplify
+    "T",  # flake8-debugger
+    "UP",  # pyupgrade
+]
+
+[tool.ruff.lint.per-file-ignores]
+"docs/source/conf.py" = ["A001"]  # `copyright` is a Sphinx config name
+
+[tool.ruff.lint.mccabe]
+max-complexity = 15
+
+[tool.ruff.lint.isort]
+combine-as-imports = true
+known-first-party = ["sklearn_hierarchical_classification"]
+lines-after-imports = 2
+no-lines-before = ["standard-library"]

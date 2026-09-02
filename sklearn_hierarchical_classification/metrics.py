@@ -2,6 +2,7 @@
 Evaluation metrics for hierarchical classification.
 
 """
+
 from contextlib import contextmanager
 
 import numpy as np
@@ -47,18 +48,11 @@ def multi_labeled(y_true, y_pred, graph):
 
     """
     mlb = MultiLabelBinarizer()
-    all_classes = [
-        node
-        for node in graph.nodes
-        if node != ROOT
-    ]
+    all_classes = [node for node in graph.nodes if node != ROOT]
     # Nb. we pass a (singleton) list-within-a-list as fit() expects an iterable-of-iterables
     mlb.fit([all_classes])
 
-    node_label_mapping = {
-        old_label: new_label
-        for new_label, old_label in enumerate(list(mlb.classes_))
-    }
+    node_label_mapping = {old_label: new_label for new_label, old_label in enumerate(list(mlb.classes_))}
 
     yield (
         mlb.transform(y_true),
@@ -198,7 +192,7 @@ def h_recall_score(y_true, y_pred, class_hierarchy, root=ROOT):
     return true_positives / all_positives
 
 
-def h_fbeta_score(y_true, y_pred, class_hierarchy, beta=1., root=ROOT):
+def h_fbeta_score(y_true, y_pred, class_hierarchy, beta=1.0, root=ROOT):
     """
     Calculate the micro-averaged hierarchical F-beta ("hF_{\beta}") metric based on
     given set of true class labels and predicated class labels, and the
@@ -237,4 +231,4 @@ def h_fbeta_score(y_true, y_pred, class_hierarchy, beta=1., root=ROOT):
     """
     hP = h_precision_score(y_true, y_pred, class_hierarchy, root=root)
     hR = h_recall_score(y_true, y_pred, class_hierarchy, root=root)
-    return (1. + beta ** 2.) * hP * hR / (beta ** 2. * hP + hR)
+    return (1.0 + beta**2.0) * hP * hR / (beta**2.0 * hP + hR)
