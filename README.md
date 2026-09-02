@@ -11,8 +11,8 @@ Hierarchical classification module based on scikit-learn's interfaces and conven
 parent node" over a class hierarchy given as a tree or DAG (a `networkx.DiGraph` or an adjacency dict),
 and predicts by walking the hierarchy top-down. It supports mandatory and non-mandatory leaf-node
 prediction (early stopping), per-node base estimators, and a "raw" feature-extraction mode where the
-base estimator is a full `Pipeline` operating on raw inputs such as text. Multi-label targets (via a
-`MultiLabelBinarizer` passed as `mlb`) are supported in raw mode. Hierarchical precision/recall/F-beta
+base estimator is a full `Pipeline` operating on raw inputs such as text. Multi-label targets are
+supported in both modes via a `MultiLabelBinarizer` passed as `mlb`. Hierarchical precision/recall/F-beta
 metrics are provided in `sklearn_hierarchical_classification.metrics`.
 
 See the GitHub Pages hosted documentation [here](http://code.globality.com/sklearn-hierarchical-classification/).

@@ -247,33 +247,28 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             Data.
 
         y : (sparse) array-like, shape = [n_samples, ], [n_samples, n_classes]
-            Multi-class targets. A binary indicator matrix (as produced by the `MultiLabelBinarizer`
-            passed as `mlb`) turns on multi-label classification; this is only supported together
-            with `feature_extraction="raw"`.
+            Multi-class targets, or, when `mlb` is set, the binary indicator matrix produced by that
+            `MultiLabelBinarizer` (dense or sparse) for multi-label classification.
 
         Returns
         -------
         self
 
         """
+        if self.mlb is not None and issparse(y):
+            # A binary indicator matrix (e.g. from MultiLabelBinarizer(sparse_output=True) or fetch_rcv1)
+            y = y.toarray()
+
         if self.feature_extraction == "raw":
             # In raw mode, only validate targets (y) format and
             # that targets and training data (X) are of same cardinality, since
             # X will in general not be a 2D feature matrix, but rather the raw training examples,
             # e.g. text snippets or images.
-            y = check_array(
-                y,
-                accept_sparse="csr",
-                ensure_all_finite=True,
-                ensure_2d=False,
-                dtype=None,
-            )
+            y = check_array(y, ensure_all_finite=True, ensure_2d=False, dtype=None)
             if len(X) != y.shape[0]:
                 raise ValueError("bad input shape: len(X) != y.shape[0]")
-            if issparse(y):
-                y = y.toarray()
         else:
-            X, y = validate_data(self, X, y, accept_sparse="csr")
+            X, y = validate_data(self, X, y, accept_sparse="csr", multi_output=self.mlb is not None)
 
         check_classification_targets(y)
 
