@@ -64,6 +64,12 @@ class ParameterValidator:
         ):
             raise TypeError("""'stopping_criteria' must be set to a float or a callable.""")
 
+        if self.mlb is not None and (self.prediction_depth == "nmlnp" or self.stopping_criteria is not None):
+            raise TypeError(
+                """Early stopping ('prediction_depth' set to "nmlnp" or a 'stopping_criteria') is only defined
+                for single-label prediction and cannot be combined with 'mlb'."""
+            )
+
         if self.feature_extraction not in VALID_FEATURE_EXTRACTION:
             raise TypeError(
                 "'feature_extraction' must be set to one of: {}.".format(

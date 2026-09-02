@@ -89,6 +89,13 @@ clf = HierarchicalClassifier(
   number of columns since prediction passes unselected rows to the local classifiers.
 - The `array` helpers `extract_rows_csr`, `nnz_rows_ix`, `apply_rollup_Xy` and `apply_rollup_Xy_raw`
   were internal to the old per-node matrix building and have been removed.
+- In multi-label mode (`mlb`), `predict()` now returns a binary indicator matrix over `mlb.classes_` of
+  the nodes visited by each sample, matching the `y` passed to `fit` and the columns of
+  `predict_proba()`. It previously returned an array of root-prefixed node paths with duplicated entries.
+  `predict_proba()` in that mode is now sized by `mlb.classes_`.
+- Early stopping (`prediction_depth="nmlnp"` / `stopping_criteria`) is rejected together with `mlb`; it
+  was silently ignored before. A callable `stopping_criteria` returns True to stop (the code always
+  behaved this way; the docstring said the opposite) and is no longer consulted at the root.
 - The default base estimator is `LogisticRegression(solver="lbfgs")` without the removed
   `multi_class="multinomial"` argument. On scikit-learn 1.6/1.7 this means binary local classifiers use
   one-vs-rest, so predicted probabilities (and hence `nmlnp` stopping decisions) can differ slightly

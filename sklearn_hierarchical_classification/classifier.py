@@ -4,7 +4,7 @@ Hierarchical classifier interface.
 """
 
 import numpy as np
-from networkx import DiGraph, dfs_preorder_nodes
+from networkx import DiGraph, dfs_preorder_nodes, topological_sort
 from scipy.sparse import issparse
 from sklearn.base import (
     BaseEstimator,
@@ -17,7 +17,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_array, check_is_fitted, validate_data
 
-from sklearn_hierarchical_classification.array import apply_along_rows, flatten_list, nnz_columns_count
+from sklearn_hierarchical_classification.array import flatten_list, nnz_columns_count
 from sklearn_hierarchical_classification.constants import (
     CLASSIFIER,
     DEFAULT,
@@ -30,6 +30,39 @@ from sklearn_hierarchical_classification.graph import children_by_descendant, ma
 from sklearn_hierarchical_classification.validation import is_estimator, validate_parameters
 
 
+class _PredictionState:
+    """Per-sample bookkeeping of one top-down prediction pass."""
+
+    def __init__(self, n_samples, root, n_columns, column_index):
+        self.last = np.full(n_samples, root, dtype=object)  # deepest node reached so far, per sample
+        self.visits = []  # (node, rows) in visiting order; the root is never recorded
+        self.class_proba = None if n_columns is None else np.zeros((n_samples, n_columns), dtype=np.float64)
+        self.column_index = column_index
+
+    def columns_of(self, classes):
+        """Score-matrix columns of a local classifier's classes."""
+        try:
+            return np.fromiter((self.column_index[class_] for class_ in classes), dtype=np.intp, count=len(classes))
+        except KeyError as error:
+            raise ValueError(
+                f"Local classifier predicts class {error.args[0]!r}, which is not a column of the class hierarchy"
+            ) from None
+
+    def record(self, node, rows):
+        """Mark `rows` as having reached `node`; returns `rows` for chaining."""
+        self.last[rows] = node
+        self.visits.append((node, rows))
+        return rows
+
+    def set_scores(self, rows, columns, scores):
+        if self.class_proba is not None:
+            self.class_proba[rows[:, None], columns] = scores
+
+    def add_scores(self, rows, columns, scores):
+        if self.class_proba is not None:
+            self.class_proba[rows[:, None], columns] += scores
+
+
 def _rows_by_label(y, columns=None):
     """
     Map each label to the sorted row indices carrying it.
@@ -40,6 +73,8 @@ def _rows_by_label(y, columns=None):
     """
     if columns is not None:
         return {label: np.flatnonzero(y[:, column]) for column, label in enumerate(columns)}
+    if len(y) == 0:
+        return {}
     order = np.argsort(y, kind="stable")
     labels, starts = np.unique(y[order], return_index=True)
     return dict(zip(labels, np.split(order, starts[1:]), strict=True))
@@ -123,8 +158,9 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         When set to a function, the callback function will be called with the current node attributes,
         including its metafeatures, and the current classification results.
         This allows the user to define arbitrary logic that can decide whether classification should stop at
-        the current node or continue. The function should return True if classification should continue,
-        or False if classification should stop at current node.
+        the current node or continue. The function should return True if classification should stop at the
+        current node, or False if it should continue to the predicted child. It is never consulted at the
+        root node. Early stopping is not available in multi-label mode (`mlb`).
 
     root : integer, string
         The unique identifier for the qualified root node in the class hierarchy. The hierarchical classifier
@@ -264,26 +300,21 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
         Returns
         -------
-        y : (sparse) array-like, shape = [n_samples, ], [n_samples, n_classes].
-            Predicted multi-class targets.
+        y : array-like, shape = [n_samples, ] or [n_samples, n_classes]
+            Predicted targets: the deepest node reached by each sample's top-down walk. In
+            multi-label mode (`mlb` is set), a binary indicator matrix over `mlb.classes_` of the
+            nodes visited (the root excluded), in the same format as the `y` passed to `fit`.
+
+        Nb. with `prediction_depth="nmlnp"` predictions mix intermediate and leaf nodes, so use
+        node identifiers of a single type; mixed int/str labels are coerced to strings by numpy.
 
         """
         check_is_fitted(self, "graph_")
-
-        def _classify(x):
-            path, _ = self._recursive_predict(x, root=self.root)
-            if self.mlb:
-                return path
-            else:
-                return path[-1]
-
-        if self.feature_extraction == "raw":
-            return np.array([_classify(X[i]) for i in range(len(X))])
-        else:
-            X = validate_data(self, X, accept_sparse="csr", reset=False)
-
-        y_pred = apply_along_rows(_classify, X=X)
-        return y_pred
+        X = self._check_predict_input(X)
+        state = self._predict_top_down(X, n_columns=None)
+        if self.mlb is not None:
+            return self._visits_as_indicator(state, n_samples=self._n_samples(X))
+        return np.asarray(state.last.tolist())
 
     def predict_proba(self, X):
         """
@@ -296,23 +327,140 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         Returns
         -------
         C : array-like, shape = [n_samples, n_classes]
-            Returns the probability of the samples for each class in
-            the model. The columns correspond to the classes in sorted
-            order, as they appear in the attribute `classes_`.
+            The local classifier scores seen for each class along the top-down walk of each
+            sample, zero for classes at nodes that were not visited. Columns follow `classes_`,
+            or `mlb.classes_` in multi-label mode (where a class under several visited parents
+            accumulates the score from each).
         """
         check_is_fitted(self, "graph_")
+        X = self._check_predict_input(X)
+        n_columns = len(self.mlb.classes_) if self.mlb is not None else self.n_classes_
+        return self._predict_top_down(X, n_columns=n_columns).class_proba
 
-        def _classify(x):
-            _, scores = self._recursive_predict(x, root=self.root)
-            return scores
-
+    def _check_predict_input(self, X):
         if self.feature_extraction == "raw":
-            return np.array([_classify(X[i]) for i in range(len(X))])
-        else:
-            X = validate_data(self, X, accept_sparse="csr", reset=False)
+            return X
+        return validate_data(self, X, accept_sparse="csr", reset=False)
 
-        y_pred = apply_along_rows(_classify, X=X)
-        return y_pred
+    def _predict_top_down(self, X, n_columns):
+        """Walk the hierarchy top-down for every sample at once.
+
+        Nodes are processed in topological order, each scoring in a single call exactly the
+        samples that reached it (from any number of parents), then handing each sample on to the
+        child (or children, in multi-label mode) it selects. `n_columns` sizes the score matrix,
+        or is None when only the reached nodes are needed.
+
+        """
+        n_samples = self._n_samples(X)
+        state = _PredictionState(n_samples, root=self.root, n_columns=n_columns, column_index=self._column_index())
+        if n_samples == 0:
+            return state
+        if CLASSIFIER not in self.graph_.nodes[self.root]:
+            raise ValueError(
+                "No local classifier at the root node: fit found no training samples labeled with a "
+                "descendant of the root, so nothing can be predicted"
+            )
+
+        descend = self._descend_multi_label if self.mlb is not None else self._descend_single_label
+        inbox = {self.root: [np.arange(n_samples)]}
+        for node_id in topological_sort(self.graph_):
+            arrived = inbox.pop(node_id, None)
+            clf = self.graph_.nodes[node_id].get(CLASSIFIER)
+            if arrived is None or clf is None:
+                # Nothing reached this node, or the walk of what did ends here
+                continue
+            rows = np.unique(np.concatenate(arrived))
+            X_rows = X if len(rows) == n_samples else self._rows(X, rows)
+            for child, child_rows in descend(node_id, clf, rows, self._local_scores(clf, X_rows), state):
+                inbox.setdefault(child, []).append(child_rows)
+        return state
+
+    def _column_index(self):
+        """Score-matrix column of each class: positions of `classes_`, or of the `mlb` columns."""
+        if self.mlb is not None:
+            return {column: column for column in range(len(self.mlb.classes_))}
+        return {class_: column for column, class_ in enumerate(self.classes_)}
+
+    def _descend_single_label(self, node_id, clf, rows, scores, state):
+        """Record local scores, pick the best child per sample, and return the (child, rows) to visit next."""
+        state.set_scores(rows, state.columns_of(clf.classes_), scores)
+        best = scores.argmax(axis=1)
+        predictions = np.asarray(clf.classes_)[best]
+        kept = np.flatnonzero(~self._should_stop(node_id, predictions, scores[np.arange(len(rows)), best]))
+        return [
+            (clf.classes_[column], state.record(clf.classes_[column], rows[kept[positions]]))
+            for column, positions in _rows_by_label(best[kept]).items()
+        ]
+
+    def _descend_multi_label(self, node_id, clf, rows, scores, state):
+        """Accumulate local scores and descend into every child of this node scoring above the threshold."""
+        columns = state.columns_of(clf.classes_)
+        state.add_scores(rows, columns, scores)
+        children = set(self.graph_.successors(node_id))
+        next_nodes = []
+        for local_column, column in enumerate(columns):
+            child = self.mlb.classes_[column]
+            if child not in children:
+                # A local class that is not a child of this node (e.g. an ancestor's column) never routes samples
+                continue
+            selected = rows[scores[:, local_column] > self.mlb_prediction_threshold]
+            if len(selected):
+                next_nodes.append((child, state.record(child, selected)))
+        return next_nodes
+
+    def _visits_as_indicator(self, state, n_samples):
+        indicator = np.zeros((n_samples, len(self.mlb.classes_)), dtype=int)
+        column_of = {label: column for column, label in enumerate(self.mlb.classes_)}
+        for node, rows in state.visits:
+            indicator[rows, column_of[node]] = 1
+        return indicator
+
+    def _should_stop(self, node_id, predictions, scores):
+        """
+        Boolean mask of the samples whose top-down walk terminates at `node_id`, per the
+        "prediction_depth" and "stopping_criteria" parameters. The walk never stops at the
+        (artificial) root, so every sample gets at least one prediction.
+
+        """
+        if self.prediction_depth != "nmlnp" or node_id == self.root:
+            return np.zeros(len(predictions), dtype=bool)
+
+        if callable(self.stopping_criteria):
+            node = self.graph_.nodes[node_id]
+            return np.array(
+                [
+                    bool(self.stopping_criteria(current_node=node, prediction=prediction, score=score))
+                    for prediction, score in zip(predictions, scores, strict=True)
+                ],
+                dtype=bool,
+            )
+
+        if isinstance(self.stopping_criteria, float):
+            return scores < self.stopping_criteria
+        return np.zeros(len(predictions), dtype=bool)
+
+    def _local_scores(self, clf, X):
+        """
+        Score a batch of samples with the local classifier at a node.
+
+        Returns a 2-D array of shape [n_samples, n_local_classes] aligned with ``clf.classes_``,
+        whether the scores come from ``decision_function`` or ``predict_proba``.
+
+        """
+        if self.use_decision_function and hasattr(clf, "decision_function"):
+            scores = np.asarray(clf.decision_function(X))
+            if scores.ndim == 1:
+                # A binary decision_function returns one signed score per sample, for classes_[1]
+                scores = np.column_stack([-scores, scores]) if len(clf.classes_) == 2 else scores[:, None]
+        else:
+            scores = np.asarray(clf.predict_proba(X))
+
+        expected = (self._n_samples(X), len(clf.classes_))
+        if scores.shape != expected:
+            raise ValueError(
+                f"Local classifier {type(clf).__name__} returned scores of shape {scores.shape}, expected {expected}"
+            )
+        return scores
 
     @property
     def n_classes_(self):
@@ -425,7 +573,18 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             len(y_),
         )
         clf.fit(X=X_, y=y_)
+        self._check_local_classes(node_id, clf)
         self.graph_.nodes[node_id][CLASSIFIER] = clf
+
+    def _check_local_classes(self, node_id, clf):
+        """A single-label local classifier must predict hierarchy nodes, or prediction cannot route."""
+        if self.mlb is not None:
+            return
+        unknown = [class_ for class_ in clf.classes_ if class_ not in self._column_index()]
+        if unknown:
+            raise ValueError(
+                f"Local classifier at node {node_id!r} predicts classes {unknown} that are not hierarchy nodes"
+            )
 
     def _roll_up(self, X_, y_rows, child_of):
         """
@@ -473,124 +632,6 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             # Nb. wrap as a 1-element array-like: DummyClassifier's parameter validation rejects numpy scalars
             return DummyClassifier(strategy="constant", constant=[y_[0]])
         return self._base_estimator_for(node_id)
-
-    def _local_scores(self, clf, x):
-        """
-        Score a single sample with the local classifier at a node.
-
-        Returns a 1-D array of per-class scores aligned with ``clf.classes_``, regardless of
-        feature extraction mode (a raw sample is wrapped as a length-1 batch) and of whether
-        scores come from ``decision_function`` or ``predict_proba``.
-
-        """
-        x_ = [x] if self.feature_extraction == "raw" else x
-        if self.use_decision_function and hasattr(clf, "decision_function"):
-            scores = np.asarray(clf.decision_function(x_)).reshape(-1)
-            if len(clf.classes_) == 2 and scores.shape[0] == 1:
-                # A binary decision_function returns a single signed score for classes_[1]
-                scores = np.array([-scores[0], scores[0]])
-            return scores
-        return np.asarray(clf.predict_proba(x_)).reshape(-1)
-
-    def _recursive_predict(self, x, root):
-        if CLASSIFIER not in self.graph_.nodes[root]:
-            return None, None
-
-        clf = self.graph_.nodes[root][CLASSIFIER]
-        path = [root]
-        path_proba = []
-        class_proba = np.zeros_like(self.classes_, dtype=np.float64)
-
-        while clf:
-            probs = self._local_scores(clf, x)
-            argmax = np.argmax(probs)
-            score = probs[argmax]
-
-            path_proba.append(score)
-            if self.mlb is not None:
-                predictions = []
-
-            # Report probabilities in terms of complete class hierarchy
-            if len(clf.classes_) == 1:
-                prediction = clf.classes_[0]
-
-            for local_class_idx, class_ in enumerate(clf.classes_):
-                if self.mlb:
-                    # when we have a multi-label binarizer
-                    class_idx = class_
-                    class_proba[class_idx] = probs[local_class_idx]
-                    if class_proba[class_idx] > self.mlb_prediction_threshold:
-                        predictions.append(self.mlb.classes_[class_])
-                else:
-                    try:
-                        class_idx = self.classes_.index(class_)
-                    except ValueError:
-                        # This may happen if the classes_ enumeration we construct during fit()
-                        # has a mismatch with the individual node classifiers" classes_.
-                        self.logger.error(
-                            "Could not find index in self.classes_ for class_ = '%s' (type: %s). path: %s",
-                            class_,
-                            type(class_),
-                            path,
-                        )
-                        raise
-                    class_proba[class_idx] = probs[local_class_idx]
-                    if local_class_idx == argmax:
-                        prediction = class_
-
-            if self.mlb is None:
-                if self._should_early_terminate(
-                    current_node=path[-1],
-                    prediction=prediction,
-                    score=score,
-                ):
-                    break
-
-                # Update current path
-                path.append(prediction)
-                clf = self.graph_.nodes[prediction].get(CLASSIFIER, None)
-            else:
-                clf = None
-                for prediction in predictions:
-                    pred_path, preds_prob = self._recursive_predict(x, prediction)
-                    path.append(prediction)
-                    if preds_prob is not None:
-                        class_proba += preds_prob
-                        path.extend(pred_path)
-
-        return path, class_proba
-
-    def _should_early_terminate(self, current_node, prediction, score):
-        """
-        Evaluate whether classification should terminate at given step.
-
-        This depends on whether early-termination, as dictated by the the "prediction_depth"
-          and "stopping_criteria" parameters, is triggered.
-
-        """
-        if self.prediction_depth != "nmlnp":
-            # Prediction depth parameter does not allow for early termination
-            return False
-
-        if isinstance(self.stopping_criteria, float) and score < self.stopping_criteria:
-            if current_node == self.root:
-                return False
-
-            self.logger.debug(
-                "_should_early_terminate() - score %s < %s, terminating at node %s",
-                score,
-                self.stopping_criteria,
-                current_node,
-            )
-            return True
-        elif callable(self.stopping_criteria):
-            return self.stopping_criteria(
-                current_node=self.graph_.nodes[current_node],
-                prediction=prediction,
-                score=score,
-            )
-
-        return False
 
     def _base_estimator_for(self, node_id):
         base_estimator = None
