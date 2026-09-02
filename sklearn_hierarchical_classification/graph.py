@@ -4,8 +4,9 @@ Graph processing helpers.
 """
 
 from collections import defaultdict
+from itertools import chain
 
-from networkx import all_simple_paths
+from networkx import descendants
 from numpy import ndarray
 
 
@@ -21,32 +22,35 @@ def rollup_nodes(graph, source, targets, mlb=None):
     """Perform a "roll-up" of given target nodes up to the nodes immediately below
     given source node in given graph.
 
-    Nb. a target equal to the source node itself yields a single-node path (``[source]``)
-    from networkx >= 3.0, so such paths are skipped since they have no child node to roll up to.
+    For each target, the result is the list of children of `source` under which the target lies
+    (one child on a tree, possibly several on a DAG, each listed once). A target that is not a
+    strict descendant of `source`, including `source` itself, rolls up to an empty list.
+
+    When `mlb` is given, each target is a binary indicator row over `mlb.classes_` and the result
+    is the concatenation of the roll-ups of every label set in it.
 
     """
-    result_cache = {}
+    child_of = children_by_descendant(graph, source)
     resultset = []
     for node_id in targets:
-        if mlb and isinstance(node_id, ndarray):
-            # multi-label binarizer was passed and node_id is an array, perform a roll-up
-            # for multi-label targets.
+        if mlb is not None and isinstance(node_id, ndarray):
             result_row = []
             for label in node_id.nonzero()[0]:
-                if label not in result_cache:
-                    result_cache[label] = list(all_simple_paths(G=graph, source=source, target=mlb.classes_[label]))
-                all_paths = result_cache[label]
-                result_row.extend([path[1] for path in all_paths if len(path) > 1])
+                result_row.extend(child_of.get(mlb.classes_[label], ()))
             resultset.append(result_row)
         else:
-            if node_id not in result_cache:
-                result_cache[node_id] = list(all_simple_paths(G=graph, source=source, target=node_id))
-            all_paths = result_cache[node_id]
-            resultset.append([path[1] for path in all_paths if len(path) > 1])
-
-    assert len(resultset) == len(targets)
+            resultset.append(list(child_of.get(node_id, ())))
 
     return resultset
+
+
+def children_by_descendant(graph, source):
+    """Map every strict descendant of `source` to the children of `source` it lies under."""
+    child_of = {}
+    for child in graph.successors(source):
+        for node in chain([child], descendants(graph, child)):
+            child_of.setdefault(node, []).append(child)
+    return child_of
 
 
 def root_nodes(graph):

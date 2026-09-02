@@ -6,6 +6,7 @@ from sklearn_hierarchical_classification.array import (
     apply_along_rows,
     apply_rollup_Xy,
     apply_rollup_Xy_raw,
+    extract_rows_csr,
     nnz_columns_count,
 )
 
@@ -73,3 +74,13 @@ def test_nnz_columns_count():
     X = np.array([[1, 0, 0, 0], [0, 0, 2, 0]])
 
     assert_that(nnz_columns_count(X), is_(equal_to(2)))
+
+
+def test_extract_rows_csr_keeps_only_requested_rows():
+    X = np.arange(1, 13).reshape(4, 3)
+
+    X_ = extract_rows_csr(X, rows=np.array([0, 2]))
+
+    assert_that(X_.shape, is_(equal_to((4, 3))))
+    assert_that(X_.toarray().tolist(), is_(equal_to([[1, 2, 3], [0, 0, 0], [7, 8, 9], [0, 0, 0]])))
+    assert_that(extract_rows_csr(X, rows=[]).nnz, is_(equal_to(0)))

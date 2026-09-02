@@ -3,9 +3,11 @@ Hierarchical classifier interface.
 
 """
 
+from itertools import chain
+
 import numpy as np
-from networkx import DiGraph, is_tree
-from scipy.sparse import csr_matrix
+from networkx import DiGraph, descendants, is_tree
+from scipy.sparse import issparse
 from sklearn.base import (
     BaseEstimator,
     ClassifierMixin,
@@ -21,9 +23,7 @@ from sklearn_hierarchical_classification.array import (
     apply_along_rows,
     apply_rollup_Xy,
     apply_rollup_Xy_raw,
-    extract_rows_csr,
-    flatten_list,
-    nnz_rows_ix,
+    nnz_columns_count,
 )
 from sklearn_hierarchical_classification.constants import (
     CLASSIFIER,
@@ -35,6 +35,14 @@ from sklearn_hierarchical_classification.decorators import logger
 from sklearn_hierarchical_classification.dummy import DummyProgress
 from sklearn_hierarchical_classification.graph import make_flat_hierarchy, rollup_nodes
 from sklearn_hierarchical_classification.validation import is_estimator, validate_parameters
+
+
+def _rows_by_label(y):
+    """Map each distinct label in `y` to the sorted array of row indices carrying it."""
+    order = np.argsort(y, kind="stable")
+    labels, starts = np.unique(y[order], return_index=True)
+    bounds = np.append(starts, len(order))
+    return {label: np.sort(order[start:end]) for label, start, end in zip(labels, bounds[:-1], bounds[1:], strict=True)}
 
 
 @logger
@@ -240,14 +248,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         self.is_tree_ = is_tree(self.graph_)
         self.classes_ = [node for node in self.graph_.nodes() if node != self.root]
 
-        if self.feature_extraction == "preprocessed":
-            # When not in raw mode, recursively build training feature sets for each node in graph
-            with self._progress(total=self.n_classes_ + 1, desc="Building features") as progress:
-                self._recursive_build_features(X, y, node_id=self.root, progress=progress)
-
-        # Recursively train base classifiers
-        with self._progress(total=self.n_classes_ + 1, desc="Training base classifiers") as progress:
-            self._recursive_train_local_classifiers(X, y, node_id=self.root, progress=progress)
+        with self._progress(total=self.graph_.number_of_nodes(), desc="Training local classifiers") as progress:
+            self._train_local_classifiers(X, y, progress=progress)
 
         return self
 
@@ -319,84 +321,45 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         """Check the parameter assignment is valid and internally consistent."""
         validate_parameters(self)
 
-    def _recursive_build_features(self, X, y, node_id, progress):
-        """
-        Build the training feature matrix X recursively, for each node.
+    def _train_local_classifiers(self, X, y, progress):
+        """Train the local classifier at every node reachable from the root.
 
-        By default we use "hierarchical feature set" (terminology per Ceci and Malerba 2007)
-        which builds up features at each node in the hiearchy by "rolling up" training examples
-        defined on the the leaf nodes (classes) of the hierarchy into the parent classes relevant
-        for classification at a particular non-leaf node.
+        Each node's training set is the set of samples labeled with a strict descendant of that node
+        (samples labeled with the node itself belong to its parent's training set). Those samples are
+        selected by index directly from `X`, so no per-node copy of the feature matrix is ever built.
 
         """
-        if "X" in self.graph_.nodes[node_id]:
-            # Already visited this node in feature building phase
-            return self.graph_.nodes[node_id]["X"]
+        rows_by_label = None if self.mlb is not None else _rows_by_label(y)
+        for node_id in chain([self.root], descendants(self.graph_, self.root)):
+            progress.update(1)
+            self._train_local_classifier(X, y, node_id, rows_by_label=rows_by_label)
 
-        self.logger.debug("Building features for node: %s", node_id)
-        progress.update(1)
+    def _training_rows(self, y, node_id, rows_by_label):
+        """Sorted indices of the samples labeled with a strict descendant of `node_id`."""
+        below = descendants(self.graph_, node_id)
+        if self.mlb is None:
+            groups = [rows_by_label[label] for label in below if label in rows_by_label]
+            return np.sort(np.concatenate(groups)) if groups else np.empty(0, dtype=np.intp)
 
-        if self.graph_.out_degree(node_id) == 0:
-            # Leaf node
-            indices = np.flatnonzero(y == node_id)
-            self.graph_.nodes[node_id]["X"] = self._build_features(
-                X=X,
-                y=y,
-                indices=indices,
-            )
-
-            return self.graph_.nodes[node_id]["X"]
-
-        # Non-leaf node
-        self.graph_.nodes[node_id]["X"] = csr_matrix(X.shape, dtype=X.dtype)
-
-        for child_node_id in self.graph_.successors(node_id):
-            self.graph_.nodes[node_id]["X"] += self._recursive_build_features(
-                X=X,
-                y=y,
-                node_id=child_node_id,
-                progress=progress,
-            )
-
-        # Build and store metafeatures for node
-        self.graph_.nodes[node_id][METAFEATURES] = self._build_metafeatures(
-            X=self.graph_.nodes[node_id]["X"],
-            y=y,
-        )
-
-        # Append training data tagged with current (intermediate) node if any, and propagate up
-        if not np.issubdtype(type(node_id), y.dtype):
-            # If current intermediate node id type is different than that of targets array, dont bother.
-            # Nb. doing this check explicitly to avoid FutureWarning, see:
-            # https://stackoverflow.com/questions/40659212/futurewarning-elementwise-comparison-failed-returning-scalar-but-in-the-futur
-            return self.graph_.nodes[node_id]["X"]
-
-        indices = np.flatnonzero(y == node_id)
-        X_out = self.graph_.nodes[node_id]["X"] + self._build_features(
-            X=X,
-            y=y,
-            indices=indices,
-        )
-        return X_out
-
-    def _build_features(self, X, y, indices):
-        X_ = extract_rows_csr(X, indices)
-
-        # Perform feature selection
-        X_ = self._select_features(X=X_, y=np.array(y)[indices])
-
-        return X_
+        # Multi-label: y is a binary indicator matrix whose columns follow mlb.classes_
+        columns = [column for column, label in enumerate(self.mlb.classes_) if label in below]
+        if not columns:
+            return np.empty(0, dtype=np.intp)
+        return np.flatnonzero(np.asarray(y[:, columns].sum(axis=1)).ravel() > 0)
 
     def _select_features(self, X, y):
         """
-        Perform feature selection for training data.
+        Perform feature selection for the training data of a single node.
 
-        Can be overridden by a sub-class to implement feature selection logic.
+        Called once per trained node with that node's training samples `X` (a row subset of the
+        training data, in the same format it was passed to `fit`) and their original targets `y`.
+        Can be overridden by a sub-class to implement feature selection logic; the default is the
+        identity.
 
         """
         return X
 
-    def _build_metafeatures(self, X, y):
+    def _build_metafeatures(self, y_rows):
         """
         Build the meta-features associated with a particular node.
 
@@ -406,8 +369,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
         Parameters
         ----------
-        X : (sparse) array-like, shape = [n_samples, n_features]
-            The training data matrix at current node.
+        y_rows : array-like, shape = [n_samples] or [n_samples, n_classes]
+            The targets of the samples in the training set of the node.
 
         Returns
         -------
@@ -417,32 +380,12 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             * "n_targets" - Number of targets (classes) to classify into at given node.
 
         """
-        # Indices of non-zero rows in X, i.e rows corresponding to relevant samples for this node.
-        ix = nnz_rows_ix(X)
+        n_targets = nnz_columns_count(y_rows) if self.mlb is not None else len(np.unique(y_rows))
+        return {"n_samples": y_rows.shape[0], "n_targets": n_targets}
 
-        return {
-            "n_samples": len(ix),
-            "n_targets": len(np.unique(y[ix])),
-        }
-
-    def _recursive_train_local_classifiers(self, X, y, node_id, progress):
-        if CLASSIFIER in self.graph_.nodes[node_id]:
-            # Already trained classifier at this node, skip
-            return
-
-        progress.update(1)
-        self._train_local_classifier(X, y, node_id)
-
-        for child_node_id in self.graph_.successors(node_id):
-            self._recursive_train_local_classifiers(
-                X=X,
-                y=y,
-                node_id=child_node_id,
-                progress=progress,
-            )
-
-    def _train_local_classifier(self, X, y, node_id):
-        if self.graph_.out_degree(node_id) == 0 and self.algorithm == "lcpn":
+    def _train_local_classifier(self, X, y, node_id, rows_by_label):
+        is_leaf = self.graph_.out_degree(node_id) == 0
+        if is_leaf and self.algorithm == "lcpn":
             # Leaf nodes do not get a classifier assigned in LCPN algorithm mode.
             self.logger.debug(
                 "_train_local_classifier() - skipping leaf node %s when algorithm is 'lcpn'",
@@ -450,57 +393,14 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             )
             return
 
-        if self.feature_extraction == "raw":
-            X_ = X
-            nnz_rows = range(len(X))
-            Xl = len(X_)
-        else:
-            X = self.graph_.nodes[node_id]["X"]
-            nnz_rows = nnz_rows_ix(X)
-            X_ = X[nnz_rows, :]
-            Xl = X_.shape
+        rows = self._training_rows(y, node_id, rows_by_label)
+        y_rows = y[rows]
+        if self.mlb is not None and issparse(y_rows):
+            y_rows = y_rows.toarray()
+        if not is_leaf:
+            self.graph_.nodes[node_id][METAFEATURES] = self._build_metafeatures(y_rows)
 
-        y_rolled_up = rollup_nodes(
-            graph=self.graph_, source=node_id, targets=[y[idx] for idx in nnz_rows], mlb=self.mlb
-        )
-
-        # Drop samples whose target does not lie below the current node (e.g. samples labeled with the node
-        # itself, or with a node in another branch, which is the common case in "raw" mode where X_ is the
-        # entire training set). They carry no signal for choosing among this node's children, and keeping
-        # them would misalign X_ and the flattened y_ below.
-        keep = [i for i, labels in enumerate(y_rolled_up) if labels]
-        if len(keep) < len(y_rolled_up):
-            X_ = [X_[i] for i in keep] if self.feature_extraction == "raw" else X_[keep, :]
-            y_rolled_up = [y_rolled_up[i] for i in keep]
-
-        if self.is_tree_:
-            if self.mlb is None:
-                y_ = flatten_list(y_rolled_up)
-            else:
-                y_ = self.mlb.transform(y_rolled_up)
-                # take all non zero, only compare in side the siblings
-                idx = np.where(y_.sum(1) > 0)[0]
-                y_ = y_[idx, :]
-                X_ = [X_[tk] for tk in idx] if self.feature_extraction == "raw" else X_[idx, :]
-        else:
-            # Class hierarchy graph is a DAG
-            if self.feature_extraction == "raw":
-                X_, y_ = apply_rollup_Xy_raw(X_, y_rolled_up)
-            else:
-                X_, y_ = apply_rollup_Xy(X_, y_rolled_up)
-
-        num_targets = len(np.unique(y_))
-
-        self.logger.debug(
-            "_train_local_classifier() - Training local classifier for node: %s, X_.shape: %s, len(y): %s, n_targets: %s",  # noqa:E501
-            node_id,
-            Xl,
-            len(y_),
-            num_targets,
-        )
-
-        n_samples = len(X_) if self.feature_extraction == "raw" else X_.shape[0]
-        if n_samples == 0:
+        if len(rows) == 0:
             # No training data could be materialized for current node
             # TODO: support a "strict" mode flag to explicitly enable/disable fallback logic here?
             self.logger.warning(
@@ -508,7 +408,29 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
                 node_id,
             )
             return
-        elif num_targets == 1:
+
+        X_ = [X[i] for i in rows] if self.feature_extraction == "raw" else X[rows]
+        X_ = self._select_features(X=X_, y=y_rows)
+
+        # Roll every sample's target up to the child (or children, on a DAG) of this node it lies under
+        y_rolled_up = rollup_nodes(graph=self.graph_, source=node_id, targets=y_rows, mlb=self.mlb)
+        if self.mlb is not None:
+            y_ = self.mlb.transform(y_rolled_up)
+        elif self.feature_extraction == "raw":
+            X_, y_ = apply_rollup_Xy_raw(X_, y_rolled_up)
+        else:
+            X_, y_ = apply_rollup_Xy(X_, y_rolled_up)
+
+        num_targets = len(np.unique(y_))
+        self.logger.debug(
+            "_train_local_classifier() - Training local classifier for node: %s, n_samples: %s, len(y): %s, n_targets: %s",  # noqa:E501
+            node_id,
+            len(rows),
+            len(y_),
+            num_targets,
+        )
+
+        if num_targets == 1:
             # Training data could be materialized for only a single target at current node
             # TODO: support a "strict" mode flag to explicitly enable/disable fallback logic here?
             constant = y_[0]

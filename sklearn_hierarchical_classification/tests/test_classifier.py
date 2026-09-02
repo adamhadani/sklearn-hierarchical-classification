@@ -3,6 +3,8 @@ Unit-tests for the classifier interface.
 
 """
 
+import pickle
+
 import numpy as np
 import pytest
 from hamcrest import (
@@ -16,6 +18,7 @@ from hamcrest import (
 )
 from networkx import DiGraph
 from numpy import where
+from scipy.sparse import csr_matrix
 from sklearn import svm
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction.text import CountVectorizer
@@ -375,3 +378,72 @@ def test_raw_feature_extraction_with_predict_proba_pipeline():
 
     assert_that(list(y_pred), is_(equal_to(list(y))))
     assert_that(y_proba.shape, is_(equal_to((len(X), clf.n_classes_))))
+
+
+class RecordingLogisticRegression(LogisticRegression):
+    """Base estimator that keeps the training matrix it was fitted on, for inspection in tests."""
+
+    def fit(self, X, y, sample_weight=None):
+        self.X_fit_ = X
+        return super().fit(X, y, sample_weight=sample_weight)
+
+
+def test_dag_shared_descendant_rows_are_not_doubled():
+    r"""On a DAG, rows of a leaf with two parents must reach the grandparent's classifier once,
+    with their original values, not summed once per path.
+
+            ROOT
+           /    \
+          A      B
+         / \    / \
+        M   L  L   N
+    """
+    graph = DiGraph([(ROOT, "A"), (ROOT, "B"), ("A", "L"), ("B", "L"), ("A", "M"), ("B", "N")])
+    X = csr_matrix(np.array([[1.0, 0.0], [0.0, 2.0], [3.0, 0.0], [0.0, 4.0]]))
+    y = np.array(["L", "L", "M", "N"])
+    clf = make_classifier(base_estimator=RecordingLogisticRegression(), class_hierarchy=graph)
+
+    clf.fit(X, y)
+
+    X_root = clf.graph_.nodes[ROOT][CLASSIFIER].X_fit_
+    assert_that(X_root.shape, is_(equal_to((6, 2))))  # the two L rows are used for both A and B
+    assert_that(sorted(X_root.toarray().tolist()), is_(equal_to(sorted((X[[0, 1, 0, 1, 2, 3]]).toarray().tolist()))))
+
+
+def test_fitted_model_does_not_retain_training_data():
+    clf_small, (X_small, y_small) = make_classifier_and_data(n_classes=5, n_samples=200)
+    clf_large, (X_large, y_large) = make_classifier_and_data(n_classes=5, n_samples=20_000)
+
+    clf_small.fit(X_small, y_small)
+    clf_large.fit(X_large, y_large)
+
+    assert_that(any("X" in attrs for _, attrs in clf_large.graph_.nodes(data=True)), is_(False))
+    size_small, size_large = len(pickle.dumps(clf_small)), len(pickle.dumps(clf_large))
+    assert_that(
+        size_large < 1.2 * size_small, is_(True), f"pickled size grew with n_samples: {size_small} -> {size_large}"
+    )
+
+
+def test_select_features_hook_receives_each_node_training_subset():
+    """The overridable _select_features hook is called once per trained node with that node's
+    training rows (and their targets), so subclasses can do per-node feature selection."""
+    calls = []
+
+    class SelectingClassifier(HierarchicalClassifier):
+        def _select_features(self, X, y):
+            calls.append((X.shape[0], len(np.unique(y))))
+            return X
+
+    class_hierarchy = {ROOT: ["A", "B"], "A": [1, 7], "B": [3, 8, 9]}
+    X, y = make_digits_dataset(targets=[1, 7, 3, 8, 9], as_str=False)
+    clf = SelectingClassifier(base_estimator=LogisticRegression(max_iter=1_000), class_hierarchy=class_hierarchy)
+
+    clf.fit(X, y)
+
+    expected = {
+        (X.shape[0], 5),  # ROOT: all rows, 5 leaf targets
+        (np.isin(y, [1, 7]).sum(), 2),  # A
+        (np.isin(y, [3, 8, 9]).sum(), 3),  # B
+    }
+    assert_that(set(calls), is_(equal_to(expected)))
+    assert_that(len(calls), is_(equal_to(3)))

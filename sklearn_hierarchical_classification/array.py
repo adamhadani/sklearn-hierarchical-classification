@@ -49,49 +49,18 @@ def apply_rollup_Xy(X, y):
         Transformed by 'flattening' out y parameter and duplicating corresponding rows in X
 
     """
-    # Compute number of rows we will have after transformation
-    n_rows = sum(len(labelset) for labelset in y)
+    counts = np.fromiter((len(labelset) for labelset in y), dtype=np.intp, count=len(y))
+    y_ = flatten_list(y)
 
-    if all(len(labelset) == 1 for labelset in y):
+    if np.all(counts == 1):
         # No expansion needed
-        return X, flatten_list(y)
-
-    if n_rows == 0:
-        # Every labelset is empty, nothing to materialize
-        return csr_matrix((0, X.shape[1]), dtype=X.dtype), []
+        return X, y_
 
     if not isinstance(X, csr_matrix):
-        # Performance improvements require csr matrix
+        # Row duplication is a single fancy-indexing operation on a CSR matrix
         X = csr_matrix(X)
 
-    indptr = np.zeros((n_rows + 1), dtype=np.int32)
-    indices = []
-    data = []
-
-    indices_count = 0
-    offset = 0
-
-    # Our goal is to expand the equal labelsets into their own row within X
-    # We do this by repeating each row exactly "labelset" times
-    for i, labelset in enumerate(y):
-        labelset_sz = len(labelset)
-        for j in range(labelset_sz):
-            indptr[offset + j] = indices_count
-
-            indices.append(X.indices[X.indptr[i] : X.indptr[i + 1]])
-            data.append(X.data[X.indptr[i] : X.indptr[i + 1]])
-
-            indices_count += len(X.data[X.indptr[i] : X.indptr[i + 1]])
-
-        offset += labelset_sz
-
-    indptr[-1] = indices_count
-
-    indices = np.concatenate(indices)
-    data = np.concatenate(data)
-
-    y_ = flatten_list(y)
-    return csr_matrix((data, indices, indptr), shape=(n_rows, X.shape[1]), dtype=X.dtype), y_
+    return X[np.repeat(np.arange(X.shape[0]), counts)], y_
 
 
 def apply_rollup_Xy_raw(X, y):
@@ -134,38 +103,21 @@ def extract_rows_csr(matrix, rows):
     Returns
     -------
     matrix_: (sparse) csr_matrix
-        Transformed by extracting the desired rows from `matrix`
+        Same shape as `matrix`, with the desired rows kept and every other row zeroed
 
     """
     if not isinstance(matrix, csr_matrix):
         matrix = csr_matrix(matrix)
 
-    # Short circuit if we want a blank matrix
-    if len(rows) == 0:
-        return csr_matrix(matrix.shape)
+    keep = np.zeros(matrix.shape[0], dtype=bool)
+    keep[np.asarray(rows, dtype=np.intp)] = True
 
-    # Keep a record of the desired rows
-    indptr = np.zeros(matrix.indptr.shape, dtype=np.int32)
-    indices = []
-    data = []
-
-    # Keep track of the current index pointer
-    indices_count = 0
-
-    for i in range(matrix.shape[0]):
-        indptr[i] = indices_count
-
-        if i in rows:
-            indices.append(matrix.indices[matrix.indptr[i] : matrix.indptr[i + 1]])
-            data.append(matrix.data[matrix.indptr[i] : matrix.indptr[i + 1]])
-            indices_count += len(matrix.data[matrix.indptr[i] : matrix.indptr[i + 1]])
-
-    indptr[-1] = indices_count
-
-    indices = np.concatenate(indices)
-    data = np.concatenate(data)
-
-    return csr_matrix((data, indices, indptr), shape=matrix.shape)
+    # Zero out the stored entries of every row not kept, then drop them from the structure
+    matrix_ = matrix.copy()
+    row_of_entry = np.repeat(np.arange(matrix_.shape[0]), np.diff(matrix_.indptr))
+    matrix_.data[~keep[row_of_entry]] = 0
+    matrix_.eliminate_zeros()
+    return matrix_
 
 
 def nnz_rows_ix(X):
