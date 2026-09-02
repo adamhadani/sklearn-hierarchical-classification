@@ -9,11 +9,11 @@ full label set of each blurb (micro-F1 in both). The winning subtask-B system (T
 and a negative decision threshold to trade precision for recall; this script follows that recipe.
 
 Protocol: the decision threshold is chosen on the development split (model fitted on the training
-split only); the model is then refitted on train + dev and the test set is scored once with that
-threshold, and once with the default threshold 0 as a pre-registered baseline.
+split only); the model is then refitted on train + dev and the test set is scored once per
+pre-registered threshold: the default 0, the dev-selected value, and the paper's -0.25.
 
-Data files are downloaded on first use from the community mirror of the shared task
-(github.com/davidsbatista/GermEval-2019-Task_1) into ~/scikit_learn_data/germeval2019.
+The official data package (CC BY-NC 4.0, University of Hamburg Language Technology group) is
+downloaded on first use into ~/scikit_learn_data/germeval2019.
 
 Example:
 
@@ -26,6 +26,7 @@ import re
 import time
 import urllib.request
 import warnings
+import zipfile
 from pathlib import Path
 
 import numpy as np
@@ -41,24 +42,22 @@ from sklearn_hierarchical_classification.classifier import HierarchicalClassifie
 from sklearn_hierarchical_classification.constants import ROOT
 
 
-MIRROR = "https://raw.githubusercontent.com/davidsbatista/GermEval-2019-Task_1/master"
-FILES = {
-    "train": "data/blurbs_dev_participants/blurbs_train.txt",
-    "dev": "data/blurbs_dev_participants/blurbs_dev_participants.txt",
-    "test": "data/blurbs_test_participants/blurbs_test_participants.txt",
-    "hierarchy": "data/blurbs_test_participants/hierarchy.txt",
-    "gold": "evaluation/input/gold.txt",
-}
+PACKAGE_URL = (
+    "https://www.inf.uni-hamburg.de/en/inst/ab/lt/resources/data/germeval-2019-hmc/germeval2019t1-public-data-final.zip"
+)
+FILES = {"train": "blurbs_train.txt", "dev": "blurbs_dev.txt", "test": "blurbs_test.txt", "hierarchy": "hierarchy.txt"}
 BOOK = re.compile(r"<book .*?</book>", re.DOTALL)
 FIELD = {name: re.compile(rf"<{name}>(.*?)</{name}>", re.DOTALL) for name in ("title", "body", "isbn")}
 TOPIC = re.compile(r"<topic d=\"\d\"[^>]*>(.*?)</topic>")
 
 
 def fetch(name, cache_dir):
-    path = cache_dir / Path(FILES[name]).name
+    path = cache_dir / FILES[name]
     if not path.exists():
         cache_dir.mkdir(parents=True, exist_ok=True)
-        urllib.request.urlretrieve(f"{MIRROR}/{FILES[name]}", path)
+        archive, _ = urllib.request.urlretrieve(PACKAGE_URL)
+        with zipfile.ZipFile(archive) as package:
+            package.extractall(cache_dir)
     return path.read_text(encoding="utf-8")
 
 
@@ -71,19 +70,6 @@ def parse_books(text):
         docs.append(f"{field['title']} {field['body']}")
         labels.append(sorted(set(TOPIC.findall(book))))
     return isbns, docs, labels
-
-
-def parse_gold(text):
-    """Return {isbn: labels} for subtask B (the full label set per blurb)."""
-    gold, section = {}, None
-    for line in text.splitlines():
-        if line.strip().lower() in ("subtask_a", "subtask_b"):
-            section = line.strip().lower()
-            continue
-        if section == "subtask_b" and line.strip():
-            isbn, *topics = line.split("\t")
-            gold[isbn] = topics
-    return gold
 
 
 def make_hierarchy(text):
@@ -143,10 +129,8 @@ def main():
 
     _, X_train, y_train = parse_books(fetch("train", args.cache_dir))
     _, X_dev, y_dev = parse_books(fetch("dev", args.cache_dir))
-    isbns_test, X_test, _ = parse_books(fetch("test", args.cache_dir))
-    gold = parse_gold(fetch("gold", args.cache_dir))
-    Y_train, Y_dev = mlb.transform(y_train), mlb.transform(y_dev)
-    Y_test = mlb.transform([gold[isbn] for isbn in isbns_test])
+    _, X_test, y_test = parse_books(fetch("test", args.cache_dir))
+    Y_train, Y_dev, Y_test = mlb.transform(y_train), mlb.transform(y_dev), mlb.transform(y_test)
     print(
         f"GermEval 2019 Task 1: {len(X_train):,} train / {len(X_dev):,} dev / {len(X_test):,} test blurbs, "
         f"{len(nodes)} labels ({len(root_columns)} roots, {sum(1 for _, d in graph.out_degree() if d > 0) - 1} "
@@ -165,7 +149,12 @@ def main():
 
     # --- refit on train + dev, score the test set once per pre-registered threshold
     X_all, Y_all = X_train + X_dev, np.vstack([Y_train, Y_dev])
-    for name, threshold in (("default threshold 0", 0.0), (f"dev-selected threshold {best_t:+.2f}", best_t)):
+    thresholds = {
+        "default threshold 0": 0.0,
+        f"dev-selected threshold {best_t:+.2f}": best_t,
+        "paper's threshold -0.25": -0.25,
+    }
+    for name, threshold in thresholds.items():
         start = time.perf_counter()
         clf = make_classifier(graph, mlb, args.C, threshold).fit(X_all, Y_all)
         t_fit = time.perf_counter() - start
@@ -178,7 +167,8 @@ def main():
             f"labels/blurb {Y_pred.sum(1).mean():.2f}  no-label {np.mean(Y_pred.sum(1) == 0):.3f}   "
             f"fit {t_fit:.0f}s predict {t_predict:.1f}s"
         )
-    print("published: TwistBytes (this library, t=-0.25) subtask B 0.6767 (1st), subtask A 0.8634 (2nd, flat model)")
+    print("published test scores: TwistBytes (this library, t=-0.25) subtask B 0.6767 (1st of 10);")
+    print("                       TwistBytes flat model subtask A 0.8634 (2nd)")
 
 
 if __name__ == "__main__":
