@@ -21,6 +21,7 @@ Example:
 
 import argparse
 import time
+import warnings
 
 import numpy as np
 from networkx import DiGraph, ancestors, relabel_nodes
@@ -62,8 +63,8 @@ def timed(fn, *args):
 
 def report(name, y_true, y_pred, graph_by_column, t_fit, t_predict):
     print(
-        f"{name:<28} micro-F1 {f1_score(y_true, y_pred, average='micro'):.3f}   "
-        f"macro-F1 {f1_score(y_true, y_pred, average='macro'):.3f}   "
+        f"{name:<28} micro-F1 {f1_score(y_true, y_pred, average='micro', zero_division=0):.3f}   "
+        f"macro-F1 {f1_score(y_true, y_pred, average='macro', zero_division=0):.3f}   "
         f"hP {h_precision_score(y_true, y_pred, graph_by_column):.3f}  "
         f"hR {h_recall_score(y_true, y_pred, graph_by_column):.3f}  "
         f"hF1 {h_fbeta_score(y_true, y_pred, graph_by_column):.3f}   "
@@ -72,6 +73,8 @@ def report(name, y_true, y_pred, graph_by_column, t_fit, t_predict):
 
 
 def main():
+    # At internal nodes most indicator columns are constant; OneVsRestClassifier warns about each one
+    warnings.filterwarnings("ignore", message="Label .* is present in all training examples", category=UserWarning)
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--n-test", type=int, default=None, help="use only the first N test documents")
     parser.add_argument("--C", type=float, default=1.0, help="LinearSVC regularisation")

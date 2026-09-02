@@ -116,6 +116,24 @@ The project is managed with [uv](https://docs.astral.sh/uv/). All tooling config
     uv run pre-commit run --all-files   # everything CI enforces: ruff, mypy, hygiene hooks, tests
 
 
+## Benchmarks
+
+`benchmarks/bench.py` times fit/predict on synthetic sparse data and hierarchies of configurable
+shape; `benchmarks/rcv1_benchmark.py` runs the classic RCV1-v2 newswire benchmark (Lewis et al.
+2004: 103 topics in a 4-root hierarchy, 23,149 training and 781,265 test documents, fetched via
+scikit-learn) against a flat one-vs-rest baseline on the same TF-IDF features. Results on a laptop,
+`LinearSVC` base classifiers, decision-function threshold 0 (no per-category tuning):
+
+| Model | micro-F1 | macro-F1 | hF1 | fit | predict (781k docs) |
+|---|---:|---:|---:|---:|---:|
+| Flat `OneVsRest(LinearSVC)` | 0.804 | 0.486 | 0.808 | 3.7 s | 5.7 s |
+| `HierarchicalClassifier` (LCPN, `LinearSVC` per node) | 0.796 | 0.514 | 0.796 | 1.9 s | 2.2 s |
+| Published SVM, per-category tuned thresholds (Lewis et al. 2004) | 0.816 | 0.607 | | | |
+
+    uv run python benchmarks/bench.py --help
+    uv run python benchmarks/rcv1_benchmark.py
+
+
 ## Releasing
 
 Versions are derived from git tags by [setuptools-scm](https://github.com/pypa/setuptools-scm); there
