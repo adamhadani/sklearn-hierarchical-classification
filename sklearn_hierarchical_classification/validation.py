@@ -60,14 +60,14 @@ class ParameterValidator:
                 )
             )
 
-        if (self.prediction_depth == "nmlnp") ^ bool(self.stopping_criteria):
+        if (self.prediction_depth == "nmlnp") ^ (self.stopping_criteria is not None):
             raise TypeError(
                 """When 'prediction_depth' is set to "nmlnp", 'stopping_criteria' must be set
-                to a float or callable. Conversly, stopping_criteria should not be specified
+                to a float or callable. Conversely, stopping_criteria should not be specified
                 when prediction_depth is not set to "nmlnp"."""
             )
 
-        if self.stopping_criteria and not any(
+        if self.stopping_criteria is not None and not any(
             (
                 isinstance(self.stopping_criteria, float),
                 callable(self.stopping_criteria),

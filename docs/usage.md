@@ -47,6 +47,11 @@ the classifier a plain multi-class one.
 Use node identifiers of a single type. Predictions are returned as a numpy array, and mixed
 `int`/`str` labels would be coerced to strings.
 
+`fit` checks the hierarchy before training: it must contain `root` and be acyclic (a
+`ValueError` otherwise), and nodes the root cannot reach raise a warning since they can never
+be predicted. Labels of `y` that are not hierarchy nodes also raise a warning: they are ignored,
+which is what a typo in a label would otherwise cost silently.
+
 ### DAGs
 
 A node may have several parents. Its training samples reach every ancestor once, and at
@@ -95,7 +100,10 @@ def estimator_for(node_id, graph):
 clf = HierarchicalClassifier(base_estimator=estimator_for, class_hierarchy=class_hierarchy, use_decision_function=True)
 ```
 
-The estimator is cloned for every node, so one instance can be shared. Estimators with
+The estimator is cloned for every node, so one instance can be shared. `HierarchicalClassifier`
+itself clones like any scikit-learn estimator (`sklearn.base.clone`, grid search,
+cross-validation), with one deliberate exception: a fitted `mlb` is passed on to the clone as is,
+since it names the classes of `y` rather than holding anything learned from `X`. Estimators with
 `decision_function` only (such as `LinearSVC`) need `use_decision_function=True`; a binary
 `decision_function` returns one signed score, which is expanded to a score per class.
 

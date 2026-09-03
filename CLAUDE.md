@@ -82,6 +82,14 @@ routed, which is what keeps the walk finite. A callable `stopping_criteria` is t
 per-sample Python in prediction; it returns True to *stop*, is never consulted at the root,
 and early stopping is rejected together with `mlb` at fit time.
 
+**`__sklearn_clone__` passes a fitted `mlb` through unchanged.** scikit-learn's `clone` would
+re-instantiate the binarizer unfitted (it is a constructor parameter), and `fit` reads
+`mlb.classes_`, so every clone-based tool (grid search, `cross_val_predict`, the tuning loop in the
+docs) would fail in multi-label mode. Do not "simplify" the override away. `fit` also validates the
+hierarchy (root present, acyclic; unreachable nodes warn) and warns about labels of `y` outside it,
+which used to be dropped silently; tests rely on the warning, not an error, because fitting on a
+label subset is a legitimate use.
+
 **Single-target nodes fall back to `DummyClassifier(strategy="constant")`**, and the
 constant is wrapped as a 1-element list because scikit-learn's parameter validation
 rejects numpy scalars for `constant`.
