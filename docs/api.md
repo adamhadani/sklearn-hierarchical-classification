@@ -34,7 +34,8 @@ HierarchicalClassifier(
 A `MetaEstimatorMixin, ClassifierMixin, BaseEstimator`. Parameters are described in
 [Usage](usage#parameters-at-a-glance) and [Multi-label](multi-label); they are validated at
 `fit`, which raises `TypeError` for inconsistent combinations (for example `"inclusive"`
-without `mlb`, or early stopping with `mlb`).
+without `mlb`, or early stopping with `mlb`). `algorithm="lcn"` and the training strategies
+reserved for it are deprecated and raise a `FutureWarning` at `fit`; see [Upgrading](upgrading).
 
 **Methods**
 

@@ -36,6 +36,11 @@ the behaviours below.
   therefore use one-vs-rest, so predicted probabilities (and hence `nmlnp` stopping decisions)
   can differ slightly from 1.3.x; on scikit-learn 1.8+ there is no difference.
 
+- **`algorithm="lcn"` is deprecated** and raises a `FutureWarning` at `fit`, together with the
+  training strategies reserved for it (`"exclusive"`, `"less_exclusive"`, `"less_inclusive"`,
+  `"exclusive_siblings"`). It never had an implementation: a leaf node has no training data of
+  its own, so the fitted model was the `"lcpn"` one. Both go away in the next major release.
+
 New since 1.3.x, all opt-in: `training_strategy="inclusive"`, per-class
 `mlb_prediction_threshold`, `mlb_min_root_predictions`, and the `thresholds` module. See
 [Multi-label](multi-label).

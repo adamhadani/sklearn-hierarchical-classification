@@ -7,8 +7,10 @@ defining a non-trivial class hierarchy, etc.
 
 """
 
+import numpy as np
 from sklearn import svm
 from sklearn.calibration import CalibratedClassifierCV
+from sklearn.datasets import load_digits
 from sklearn.decomposition import TruncatedSVD
 from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
@@ -17,7 +19,6 @@ from sklearn.pipeline import make_pipeline
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
 from sklearn_hierarchical_classification.constants import ROOT
 from sklearn_hierarchical_classification.metrics import h_fbeta_score, multi_labeled
-from sklearn_hierarchical_classification.tests.fixtures import make_digits_dataset
 
 
 # Used for seeding random state
@@ -52,12 +53,10 @@ def classify_digits():
         base_estimator=base_estimator,
         class_hierarchy=class_hierarchy,
     )
-    X, y = make_digits_dataset(
-        targets=[1, 7, 3, 8, 9],
-        as_str=False,
-    )
+    X, y = load_digits(return_X_y=True)
+    keep = np.isin(y, [1, 7, 3, 8, 9])
     # cast the targets to strings so we have consistent typing of labels across hierarchy
-    y = y.astype(str)
+    X, y = X[keep], y[keep].astype(str)
 
     X_train, X_test, y_train, y_test = train_test_split(
         X,

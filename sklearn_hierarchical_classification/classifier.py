@@ -141,25 +141,22 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         stopping criteria (non-mandatory leaf-node prediction, "nmlnp"). When "nmlnp" is specified, the
         stopping_criteria parameter is used to control the behaviour of the classifier.
 
-    algorithm : "lcn", "lcpn"
-        The algorithm type to use for building the hierarchical classification, according to the
-        taxonomy defined in [1].
+    algorithm : "lcpn"
+        "lcpn" (the default) stands for "local classifier per parent node" in the taxonomy of [1]: a
+        multi-class classifier is trained at each parent node to tell its children apart.
 
-        "lcpn" (which is the default) stands for "local classifier per parent node". Under this model,
-        a multi-class classifier is trained at each parent node, to distinguish between each child nodes.
+        "lcn" ("local classifier per node", a binary membership classifier at every node) is accepted
+        but deprecated and will be removed in the next major release: it was never implemented. A leaf
+        node has no training data of its own, so the classifiers fitted are exactly those of "lcpn".
 
-        "lcn", which stands for "local classifier per node". Under this model, a binary classifier is trained
-        at each node. Under this model, a further distinction is made based on how the training data set is constructed.
-        This is controlled by the "training_strategy" parameter.
-
-    training_strategy: "exclusive", "less_exclusive", "inclusive", "less_inclusive",
-                       "siblings", "exclusive_siblings", or None.
-        Dictates how the training set of each local classifier is constructed (terminology per [1]).
-        With "lcpn" (the default algorithm) the choice is between "siblings" (the default when None: a node's
-        classifier is trained on the documents of its subtree only, so it learns to tell the children apart)
-        and "inclusive" (documents from outside the subtree are added as negatives for every child, so the
-        classifier's scores are also calibrated for documents that a parent may route to it by mistake;
-        requires `mlb`). The full set of values is reserved for the "lcn" algorithm.
+    training_strategy: "siblings", "inclusive", or None.
+        Dictates how the training set of each local classifier is constructed (terminology per [1]):
+        "siblings" (the default when None) trains a node's classifier on the documents of its subtree
+        only, so it learns to tell the children apart; "inclusive" adds the documents from outside the
+        subtree as negatives for every child, so the classifier's scores are also calibrated for documents
+        that a parent may route to it by mistake (requires `mlb`). The other values of [1] ("exclusive",
+        "less_exclusive", "less_inclusive", "exclusive_siblings") are only accepted with the deprecated
+        "lcn" algorithm and are deprecated with it.
 
     stopping_criteria: function, float, or None.
         This parameter is used when the "prediction_depth" parameter is set to "nmlnp", and is used to evaluate
@@ -296,6 +293,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         check_classification_targets(y)
 
         # Check that parameter assignment is consistent
+        self._warn_deprecated_parameters()
         self._check_parameters()
         if self.mlb is not None:
             self._class_thresholds()
@@ -554,6 +552,17 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
     def _check_parameters(self):
         """Check the parameter assignment is valid and internally consistent."""
         validate_parameters(self)
+
+    def _warn_deprecated_parameters(self):
+        if self.algorithm == "lcn":
+            warnings.warn(
+                f"algorithm='lcn' (here with training_strategy={self.training_strategy!r}) is deprecated and will "
+                "be removed in the next major release: it was never implemented. A leaf node has no training data "
+                "of its own, so the classifiers fitted are those of algorithm='lcpn' (the default), whose training "
+                "strategies are 'siblings' (the default) and 'inclusive'.",
+                FutureWarning,
+                stacklevel=3,
+            )
 
     def _n_samples(self, X):
         return len(X) if self.feature_extraction == "raw" else X.shape[0]

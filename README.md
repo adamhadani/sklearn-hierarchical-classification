@@ -85,7 +85,7 @@ clf = HierarchicalClassifier(
 The [documentation](https://promptromp.github.io/sklearn-hierarchical-classification/) covers
 hierarchies and base estimators, raw-text pipelines, early stopping, multi-label prediction and
 threshold tuning, the hierarchical metrics, and the API. `examples/classify_digits.py` is a
-complete example including the metrics (it runs from a source checkout, as it uses the test fixtures).
+complete, self-contained example including the metrics.
 
 
 ## Benchmarks

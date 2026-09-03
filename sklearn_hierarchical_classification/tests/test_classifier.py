@@ -885,11 +885,23 @@ def test_mlb_model_without_trained_classes_attribute_still_routes():
     assert_that(int(y_pred.sum()) > 0, is_(True))
 
 
+def test_lcn_algorithm_is_deprecated():
+    """`algorithm="lcn"` never had an implementation (leaf nodes get no training data, so the walk is
+    the lcpn one): it warns, and still fits and predicts as before."""
+    clf, (X, y) = make_classifier_and_data(algorithm="lcn", training_strategy="siblings")
+
+    with pytest.warns(FutureWarning, match="'lcn'"):
+        clf.fit(X, y)
+
+    assert_that(len(clf.predict(X)), equal_to(len(y)))
+
+
 def test_lcn_still_accepts_inclusive_without_mlb():
-    """`inclusive` needs `mlb` only for lcpn; the lcn strategies are validated as before."""
+    """`inclusive` needs `mlb` only for lcpn; the lcn strategies are validated as before (and warn)."""
     clf, (X, y) = make_classifier_and_data(algorithm="lcn", training_strategy="inclusive")
 
-    clf.fit(X, y)
+    with pytest.warns(FutureWarning, match="'inclusive'"):
+        clf.fit(X, y)
 
 
 def test_clone_keeps_the_fitted_binarizer():

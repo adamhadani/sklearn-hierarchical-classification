@@ -105,13 +105,15 @@ scikit-learn/numpy/networkx call fails CI before the API is removed. The filter 
 global: scikit-learn attributes its deprecation warnings to `sklearn.*`, so a
 package-scoped filter never fires. Known third-party noise (e.g. scikit-learn's dataset
 loaders under numpy 2.5) gets an explicit `ignore` entry next to it; add to that list
-rather than weakening the `error` entries.
+rather than weakening the `error` entries. The package's own deprecation, `algorithm="lcn"`
+(never implemented: leaf nodes have no training data, so it fitted the lcpn model), is a
+`FutureWarning` at `fit`, so a test that uses it must catch the warning.
 
 **Tests live inside the package** (`sklearn_hierarchical_classification/tests/`) and are
 excluded from the wheel via `packages.find.exclude` plus `include-package-data = false`.
 The latter is required: with setuptools-scm's file finder, the default would pull the
-git-tracked test files back in as package data. `examples/classify_digits.py` imports
-`tests.fixtures`, so it only runs from a source checkout.
+git-tracked test files back in as package data. `examples/classify_digits.py` must therefore
+stay self-contained: the test fixtures are not in the wheel.
 
 **`pytest.mark.slow`** marks the 20newsgroups multi-label test (downloads ~14MB, ~30s).
 The pre-commit hook runs `-m "not slow"`; CI runs everything with the dataset directory
