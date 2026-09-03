@@ -127,8 +127,7 @@ clf.fit(documents, labels)
 ```
 
 A `Pipeline` also works in the default `"preprocessed"` mode on a feature matrix, for
-example to run a per-node `TruncatedSVD`; see `examples/classify_digits.py` (runs from a source
-checkout, as it uses the test fixtures).
+example to run a per-node `TruncatedSVD`; see `examples/classify_digits.py`.
 
 ## Prediction
 
@@ -140,6 +139,38 @@ local classifier is called once per `predict` regardless of the number of sample
 local score each class received along the sample's walk, and zero for classes at nodes
 that were not visited. It is not a distribution over the leaves: scores at different depths
 come from different classifiers.
+
+### Scores and calibration
+
+The scores in `predict_proba` are whatever the local classifiers report: probabilities from
+their `predict_proba`, or signed margins when `use_decision_function=True` and the estimator
+has a `decision_function`. They are local to each node (the score of `3` above is the
+probability of `3` *given* that the walk reached `C`) and are not calibrated against each
+other across nodes or depths. Two consequences:
+
+- A float `stopping_criteria` is compared with those scores as they are: `0.7` means a
+  probability with the default estimator, and a margin with an SVM under
+  `use_decision_function`.
+- The probability of a whole path is the product of the local probabilities along it, which
+  `predict_proba` does not compute. On a tree, in single-label mode, it takes a few lines. It is
+  meaningful for the predicted leaf and its siblings only: nodes the walk did not visit hold a
+  zero, so leaves under another branch get zero and cannot be ranked against the predicted one.
+
+```python
+import numpy as np
+from networkx import shortest_path
+
+proba = clf.predict_proba(X_test)
+column = {label: i for i, label in enumerate(clf.classes_)}
+
+def path_probability(row, leaf):
+    path = shortest_path(clf.graph_, clf.root, leaf)[1:]  # the nodes below the root
+    return np.prod([proba[row, column[node]] for node in path])
+```
+
+To get probabilities from a margin-based base estimator, wrap it in scikit-learn's
+`CalibratedClassifierCV`. It is cloned and fitted at every node, so keep `cv` small where nodes
+have few samples; `ensemble=False` keeps a single model per node.
 
 ### Early stopping
 
@@ -164,6 +195,48 @@ clf = HierarchicalClassifier(
 
 Early stopping is a single-label feature and is rejected together with `mlb`.
 
+## Inspecting the fitted model
+
+`graph_` is the `networkx.DiGraph` of the hierarchy, and every node that was given a
+classifier carries it in its node attributes (the attribute names are in `constants`):
+
+| Attribute | Content |
+|---|---|
+| `"classifier"` | The fitted local classifier: a clone of the base estimator, or (single-label mode) a constant `DummyClassifier` where the training targets held a single child. |
+| `"metafeatures"` | `{"n_samples": ..., "n_targets": ...}`: the number of samples in the node's subtree (its training set, except under inclusive training, which adds the rest) and the number of distinct labels among them. |
+| `"trained_classes"` | Multi-label mode only: the children that had a positive example at the node. Only these are routed to. |
+
+```python
+from sklearn_hierarchical_classification.constants import CLASSIFIER, METAFEATURES
+
+for node, attributes in clf.graph_.nodes(data=True):
+    if CLASSIFIER in attributes:
+        print(node, attributes[METAFEATURES], type(attributes[CLASSIFIER]).__name__)
+
+clf.graph_.nodes["A"][CLASSIFIER].coef_  # the weights of the classifier choosing between 1 and 7
+```
+
+Leaves carry no classifier. A parent node without one had no training sample under it: `fit`
+logs a warning, and the walk of any sample routed there ends at that node. `classes_` lists
+every node except the root, in the column order of `predict_proba` in single-label mode; the
+multi-label columns follow `mlb.classes_`.
+
+## Saving and loading
+
+A fitted classifier pickles like any scikit-learn estimator; `joblib` is the usual choice:
+
+```python
+import joblib
+
+joblib.dump(clf, "hierarchical.joblib")
+clf = joblib.load("hierarchical.joblib")
+```
+
+The file holds the hierarchy with its fitted local classifiers (and `mlb`, in multi-label
+mode) and nothing of the training data beyond what the base estimators themselves keep (an
+`SVC` its support vectors, a nearest-neighbours model everything). The usual pickle caveats apply: load only files you
+trust, with the versions of scikit-learn and of this package that wrote them.
+
 ## Progress and logging
 
 `progress_wrapper` takes a `tqdm`-style callable (`tqdm`, `tqdm.notebook.tqdm`, ...) that is
@@ -180,7 +253,7 @@ training data logs a warning.
 | `root` | `ROOT` | Identifier of the root node. |
 | `prediction_depth` | `"mlnp"` | `"nmlnp"` allows stopping at intermediate nodes. |
 | `stopping_criteria` | `None` | Float or callable, required with `"nmlnp"`. |
-| `algorithm` | `"lcpn"` | Local classifier per parent node. `"lcn"` is accepted but has no separate implementation. |
+| `algorithm` | `"lcpn"` | Local classifier per parent node. `"lcn"` is deprecated: it was never implemented and warns at `fit`. |
 | `training_strategy` | `None` | `"siblings"` (default) or `"inclusive"` (multi-label only). See [Multi-label](multi-label). |
 | `feature_extraction` | `"preprocessed"` | `"raw"` passes the raw samples to a pipeline base estimator. |
 | `mlb` | `None` | Fitted `MultiLabelBinarizer` for multi-label targets. |

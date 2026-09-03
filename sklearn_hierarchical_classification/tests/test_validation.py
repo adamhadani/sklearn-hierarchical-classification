@@ -1,5 +1,6 @@
 """Test validation logic."""
 
+import pytest
 from hamcrest import assert_that, calling, raises
 from sklearn.preprocessing import MultiLabelBinarizer
 
@@ -25,14 +26,6 @@ def test_parameter_validation():
             "prediction_depth": "some_invalid_prediction_depth_value",
         },
         {
-            "algorithm": "lcn",
-            "training_strategy": None,
-        },
-        {
-            "algorithm": "lcn",
-            "training_strategy": "some_invalid_training_strategy",
-        },
-        {
             "algorithm": "lcpn",
             "training_strategy": "exclusive",
         },
@@ -43,6 +36,15 @@ def test_parameter_validation():
 
     for classifier_kwargs in test_cases:
         clf, (X, y) = make_classifier_and_data(**classifier_kwargs)
+        assert_that(calling(clf.fit).with_args(X=X, y=y), raises(TypeError))
+
+
+@pytest.mark.parametrize("training_strategy", [None, "some_invalid_training_strategy"])
+def test_lcn_parameters_are_validated_after_the_deprecation_warning(training_strategy):
+    """The deprecated "lcn" algorithm warns first, then its parameters are checked as before."""
+    clf, (X, y) = make_classifier_and_data(algorithm="lcn", training_strategy=training_strategy)
+
+    with pytest.warns(FutureWarning, match="'lcn'"):
         assert_that(calling(clf.fit).with_args(X=X, y=y), raises(TypeError))
 
 
