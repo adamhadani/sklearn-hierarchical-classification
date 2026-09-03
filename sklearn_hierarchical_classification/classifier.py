@@ -147,7 +147,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
         "lcn" ("local classifier per node", a binary membership classifier at every node) is accepted
         but deprecated and will be removed in the next major release: it was never implemented. A leaf
-        node has no training data of its own, so the classifiers fitted are exactly those of "lcpn".
+        node has no training data of its own, so the model fitted was exactly that of "lcpn" with the
+        "siblings" strategy, whatever `training_strategy` was set to.
 
     training_strategy: "siblings", "inclusive", or None.
         Dictates how the training set of each local classifier is constructed (terminology per [1]):
@@ -558,8 +559,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             warnings.warn(
                 f"algorithm='lcn' (here with training_strategy={self.training_strategy!r}) is deprecated and will "
                 "be removed in the next major release: it was never implemented. A leaf node has no training data "
-                "of its own, so the classifiers fitted are those of algorithm='lcpn' (the default), whose training "
-                "strategies are 'siblings' (the default) and 'inclusive'.",
+                "of its own, so the model fitted is that of algorithm='lcpn' with training_strategy='siblings' "
+                "(both defaults), whatever the training strategy; drop both parameters to keep it.",
                 FutureWarning,
                 stacklevel=3,
             )
@@ -634,12 +635,9 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
     def _train_local_classifier(self, X, y, node_id, rows_by_label):
         is_leaf = self.graph_.out_degree(node_id) == 0
-        if is_leaf and self.algorithm == "lcpn":
-            # Leaf nodes do not get a classifier assigned in LCPN algorithm mode.
-            self.logger.debug(
-                "_train_local_classifier() - skipping leaf node %s when algorithm is 'lcpn'",
-                node_id,
-            )
+        if is_leaf:
+            # A leaf has nothing below it to tell apart: no classifier (and no training data of its own)
+            self.logger.debug("_train_local_classifier() - skipping leaf node %s", node_id)
             return
 
         child_of = children_by_descendant(self.graph_, node_id)

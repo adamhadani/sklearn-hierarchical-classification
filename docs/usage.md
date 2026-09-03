@@ -152,7 +152,9 @@ other across nodes or depths. Two consequences:
   probability with the default estimator, and a margin with an SVM under
   `use_decision_function`.
 - The probability of a whole path is the product of the local probabilities along it, which
-  `predict_proba` does not compute. On a tree it takes a few lines:
+  `predict_proba` does not compute. On a tree, in single-label mode, it takes a few lines. It is
+  meaningful for the predicted leaf and its siblings only: nodes the walk did not visit hold a
+  zero, so leaves under another branch get zero and cannot be ranked against the predicted one.
 
 ```python
 import numpy as np
@@ -200,8 +202,8 @@ classifier carries it in its node attributes (the attribute names are in `consta
 
 | Attribute | Content |
 |---|---|
-| `"classifier"` | The fitted local classifier: a clone of the base estimator, or a constant `DummyClassifier` where the training targets held a single child. |
-| `"metafeatures"` | `{"n_samples": ..., "n_targets": ...}`: the size of the node's training set and the number of distinct labels among those samples. |
+| `"classifier"` | The fitted local classifier: a clone of the base estimator, or (single-label mode) a constant `DummyClassifier` where the training targets held a single child. |
+| `"metafeatures"` | `{"n_samples": ..., "n_targets": ...}`: the number of samples in the node's subtree (its training set, except under inclusive training, which adds the rest) and the number of distinct labels among them. |
 | `"trained_classes"` | Multi-label mode only: the children that had a positive example at the node. Only these are routed to. |
 
 ```python
@@ -216,7 +218,8 @@ clf.graph_.nodes["A"][CLASSIFIER].coef_  # the weights of the classifier choosin
 
 Leaves carry no classifier. A parent node without one had no training sample under it: `fit`
 logs a warning, and the walk of any sample routed there ends at that node. `classes_` lists
-every node except the root, in the column order of `predict_proba`.
+every node except the root, in the column order of `predict_proba` in single-label mode; the
+multi-label columns follow `mlb.classes_`.
 
 ## Saving and loading
 
@@ -230,7 +233,8 @@ clf = joblib.load("hierarchical.joblib")
 ```
 
 The file holds the hierarchy with its fitted local classifiers (and `mlb`, in multi-label
-mode) and nothing of the training data. The usual pickle caveats apply: load only files you
+mode) and nothing of the training data beyond what the base estimators themselves keep (an
+`SVC` its support vectors, a nearest-neighbours model everything). The usual pickle caveats apply: load only files you
 trust, with the versions of scikit-learn and of this package that wrote them.
 
 ## Progress and logging

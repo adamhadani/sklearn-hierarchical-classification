@@ -39,7 +39,8 @@ the behaviours below.
 - **`algorithm="lcn"` is deprecated** and raises a `FutureWarning` at `fit`, together with the
   training strategies reserved for it (`"exclusive"`, `"less_exclusive"`, `"less_inclusive"`,
   `"exclusive_siblings"`). It never had an implementation: a leaf node has no training data of
-  its own, so the fitted model was the `"lcpn"` one. Both go away in the next major release.
+  its own, so the model fitted was that of `"lcpn"` with `"siblings"`, whatever the training
+  strategy said. Drop both parameters to keep it. Both go away in the next major release.
 
 New since 1.3.x, all opt-in: `training_strategy="inclusive"`, per-class
 `mlb_prediction_threshold`, `mlb_min_root_predictions`, and the `thresholds` module. See

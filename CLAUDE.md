@@ -106,7 +106,8 @@ global: scikit-learn attributes its deprecation warnings to `sklearn.*`, so a
 package-scoped filter never fires. Known third-party noise (e.g. scikit-learn's dataset
 loaders under numpy 2.5) gets an explicit `ignore` entry next to it; add to that list
 rather than weakening the `error` entries. The package's own deprecation, `algorithm="lcn"`
-(never implemented: leaf nodes have no training data, so it fitted the lcpn model), is a
+(never implemented: leaf nodes have no training data, so it fitted the lcpn/siblings model whatever
+`training_strategy` said), is a
 `FutureWarning` at `fit`, so a test that uses it must catch the warning.
 
 **Tests live inside the package** (`sklearn_hierarchical_classification/tests/`) and are
