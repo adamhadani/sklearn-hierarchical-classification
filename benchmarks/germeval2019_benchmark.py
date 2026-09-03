@@ -6,19 +6,26 @@ Remus, Aly and Biemann (2019). 343 genre labels in a 4-level tree with 8 root ge
 training, 2,079 development and 4,157 test blurbs. Subtask A scores the root genres, subtask B the
 full label set of each blurb (micro-F1 in both). The winning subtask-B system (TwistBytes, Benites
 2019, micro-F1 0.6767) used this library with TF-IDF + LinearSVC local classifiers and a negative
-decision threshold to trade precision for recall. This script follows that recipe with one
-difference: the TF-IDF vocabularies are fitted once on the whole training text and shared by every
-node, where the winning system fitted them per node on the node's own subtree. Local classifiers
-use the "inclusive" training strategy by default (every out-of-subtree blurb is a negative at every
-node, which makes a shared vocabulary the natural choice); --training-strategy siblings trains each
-node on its own subtree only.
+decision threshold to trade precision for recall.
+
+Features are TF-IDF views fitted once on the training text and shared by every node (the winning
+system fitted its vocabularies per node, on the node's own subtree; its word 1-7-gram views were
+measured here and do not beat the word 1-2 + character 2-3 grams used). The "text" set has those
+two views of the title + blurb; "text+metadata" adds three more views, built from fields every
+participant had at test time (the publisher URL was withheld and is not used): the title on its
+own, the author names as tokens, and ISBN publisher prefixes, which identify the imprint. Authors
+and imprints are strong genre predictors, and the task report notes several teams used such
+metadata. Every view is L2-normalised and the views are concatenated with equal weight (scaling
+the metadata views by 0.5-1.4 was measured on dev; 1.0 is best). Local classifiers use the
+"inclusive" training strategy by default (every out-of-subtree blurb is a negative at every node);
+--training-strategy siblings trains each node on its own subtree only.
 
 Protocol: the configuration (feature set, decision threshold, root fallback) is chosen on the
 development split with models fitted on the training split only; the model is then refitted on
-train + dev and the test set is scored once for the default configuration (light features,
-threshold 0) and once for the dev-selected one. Per-class thresholds are not tuned here: most of
-the 343 labels have too few development positives for that (they hurt on dev in 2-fold
-cross-tuning), so one global threshold is selected.
+train + dev and the test set is scored once for the default configuration (text features,
+threshold 0) and once per feature set for the configuration selected on dev for it. Per-class
+thresholds are not tuned here: most of the 343 labels have too few development positives for that
+(they hurt on dev in 2-fold cross-tuning), so one global threshold is selected.
 
 The official data package (CC BY-NC 4.0, University of Hamburg Language Technology group) is
 downloaded on first use into ~/scikit_learn_data/germeval2019.
@@ -42,8 +49,8 @@ from networkx import DiGraph
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import f1_score
 from sklearn.multiclass import OneVsRestClassifier
-from sklearn.pipeline import FeatureUnion
-from sklearn.preprocessing import MultiLabelBinarizer
+from sklearn.pipeline import FeatureUnion, make_pipeline
+from sklearn.preprocessing import FunctionTransformer, MultiLabelBinarizer
 from sklearn.svm import LinearSVC
 
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
@@ -56,7 +63,7 @@ PACKAGE_URL = (
 )
 FILES = {"train": "blurbs_train.txt", "dev": "blurbs_dev.txt", "test": "blurbs_test.txt", "hierarchy": "hierarchy.txt"}
 BOOK = re.compile(r"<book .*?</book>", re.DOTALL)
-FIELD = {name: re.compile(rf"<{name}>(.*?)</{name}>", re.DOTALL) for name in ("title", "body", "isbn")}
+FIELD = {name: re.compile(rf"<{name}>(.*?)</{name}>", re.DOTALL) for name in ("title", "body", "authors", "isbn")}
 TOPIC = re.compile(r"<topic d=\"\d\"[^>]*>(.*?)</topic>")
 
 
@@ -71,14 +78,12 @@ def fetch(name, cache_dir):
 
 
 def parse_books(text):
-    """Return (isbns, documents, label sets); label sets are empty for unlabelled (test) books."""
-    isbns, docs, labels = [], [], []
+    """Return (books, label sets): each book a dict of its text fields. All three gold splits carry labels."""
+    books, labels = [], []
     for book in BOOK.findall(text):
-        field = {name: (pattern.search(book) or [None, ""])[1].strip() for name, pattern in FIELD.items()}
-        isbns.append(field["isbn"])
-        docs.append(f"{field['title']} {field['body']}")
+        books.append({name: (pattern.search(book) or [None, ""])[1].strip() for name, pattern in FIELD.items()})
         labels.append(sorted(set(TOPIC.findall(book))))
-    return isbns, docs, labels
+    return books, labels
 
 
 def make_hierarchy(text):
@@ -88,18 +93,50 @@ def make_hierarchy(text):
     return graph
 
 
+def field(fn):
+    """Transformer mapping each record (a dict of the book's fields) to the string `fn` computes from it."""
+    return FunctionTransformer(lambda records: [fn(record) for record in records])
+
+
+def record_text(record):
+    return f"{record['title']} {record['body']}"
+
+
+def title(record):
+    return record["title"]
+
+
+def author_tokens(record):
+    names = re.split(r",| und |&", record["authors"])
+    return " ".join("author_" + re.sub(r"\W+", "_", name.strip().lower()) for name in names if name.strip())
+
+
+def isbn_prefix_tokens(record):
+    # ISBN-13 publisher prefixes vary in length; one of these identifies the imprint
+    isbn = record["isbn"]
+    return " ".join(f"isbn{length}_{isbn[:length]}" for length in (7, 8, 9) if len(isbn) >= length)
+
+
+def tfidf(**kwargs):
+    return TfidfVectorizer(sublinear_tf=True, **kwargs)
+
+
+def tokens(fn):
+    return make_pipeline(field(fn), tfidf(token_pattern=r"\S+", lowercase=False))
+
+
+VIEWS = {
+    "word": lambda: make_pipeline(field(record_text), tfidf(ngram_range=(1, 2), max_features=70_000)),
+    "char": lambda: make_pipeline(
+        field(record_text), tfidf(analyzer="char_wb", ngram_range=(2, 3), max_features=70_000)
+    ),
+    "title": lambda: make_pipeline(field(title), tfidf(ngram_range=(1, 2))),
+    "authors": lambda: tokens(author_tokens),
+    "isbn": lambda: tokens(isbn_prefix_tokens),
+}
 FEATURE_SETS = {
-    # word 1-2 grams + character 2-3 grams
-    "light": lambda: [
-        ("word", TfidfVectorizer(ngram_range=(1, 2), max_features=70_000, sublinear_tf=True)),
-        ("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 3), max_features=70_000, sublinear_tf=True)),
-    ],
-    # the three views of the TwistBytes system (their second word view also removed German stopwords)
-    "heavy": lambda: [
-        ("word17", TfidfVectorizer(ngram_range=(1, 7), max_features=70_000, sublinear_tf=True)),
-        ("word13", TfidfVectorizer(ngram_range=(1, 3), min_df=2, max_features=70_000, sublinear_tf=True)),
-        ("char", TfidfVectorizer(analyzer="char_wb", ngram_range=(2, 3), max_features=70_000, sublinear_tf=True)),
-    ],
+    "text": ["word", "char"],
+    "text+metadata": ["word", "char", "title", "authors", "isbn"],
 }
 
 
@@ -115,10 +152,10 @@ def make_classifier(graph, mlb, C, strategy, threshold, min_root=0):
     )
 
 
-def vectorize(features, fit_docs, *docs):
-    """TF-IDF views of a feature set, fitted on `fit_docs` only; returns one matrix per argument."""
-    vectorizer = FeatureUnion(FEATURE_SETS[features]())
-    return [vectorizer.fit_transform(fit_docs), *(vectorizer.transform(d) for d in docs)]
+def vectorize(features, fit_books, *books):
+    """TF-IDF views of a feature set, fitted on `fit_books` only; returns one matrix per argument."""
+    vectorizer = FeatureUnion([(view, VIEWS[view]()) for view in FEATURE_SETS[features]])
+    return [vectorizer.fit_transform(fit_books), *(vectorizer.transform(b) for b in books)]
 
 
 def micro_f1(y_true, y_pred):
@@ -142,9 +179,9 @@ def main():
     columns = {node: column for column, node in enumerate(nodes)}
     root_columns = [columns[node] for node in graph.successors(ROOT)]
 
-    _, X_train, y_train = parse_books(fetch("train", args.cache_dir))
-    _, X_dev, y_dev = parse_books(fetch("dev", args.cache_dir))
-    _, X_test, y_test = parse_books(fetch("test", args.cache_dir))
+    X_train, y_train = parse_books(fetch("train", args.cache_dir))
+    X_dev, y_dev = parse_books(fetch("dev", args.cache_dir))
+    X_test, y_test = parse_books(fetch("test", args.cache_dir))
     Y_train, Y_dev, Y_test = mlb.transform(y_train), mlb.transform(y_dev), mlb.transform(y_test)
     print(
         f"GermEval 2019 Task 1: {len(X_train):,} train / {len(X_dev):,} dev / {len(X_test):,} test blurbs, "
@@ -155,7 +192,7 @@ def main():
     # --- choose feature set, threshold and root fallback on dev (models fitted on train only), using every
     #     node's score (threshold -inf visits all nodes) and emulating the walk (`thresholds.route`) per candidate
     grid = np.round(np.arange(-0.5, 0.21, 0.05), 2)
-    dev_f1 = {}
+    dev_f1, best = {}, {}
     for features in FEATURE_SETS:
         F_train, F_dev = vectorize(features, X_train, X_dev)
         start = time.perf_counter()
@@ -166,14 +203,18 @@ def main():
         for min_root in (0, 1):
             for t in grid:
                 dev_f1[(features, t, min_root)] = micro_f1(Y_dev, route(scores_dev, t, graph, nodes, min_root=min_root))
-        best = max((k for k in dev_f1 if k[0] == features), key=dev_f1.get)
-        print(f"  best on dev: threshold {best[1]:+.2f}, min_root {best[2]}: subtask-B micro-F1 {dev_f1[best]:.4f}")
+        best[features] = max((k for k in dev_f1 if k[0] == features), key=dev_f1.get)
+        _, t, min_root = best[features]
+        f1 = dev_f1[best[features]]
+        print(f"  best on dev: threshold {t:+.2f}, min_root {min_root}: subtask-B micro-F1 {f1:.4f}")
     chosen = max(dev_f1, key=dev_f1.get)
     print(f"chosen: {chosen[0]} features, threshold {chosen[1]:+.2f}, min_root {chosen[2]} (dev {dev_f1[chosen]:.4f})")
 
-    # --- refit on train + dev, score the test set once per pre-registered configuration
+    # --- refit on train + dev, score the test set once per pre-registered configuration: the default and,
+    #     for each feature set, the configuration selected on dev for it (the overall winner among them)
     X_all, Y_all = X_train + X_dev, np.vstack([Y_train, Y_dev])
-    configurations = {"default (light, threshold 0)": ("light", 0.0, 0), "dev-selected": chosen}
+    configurations = {"default (text, threshold 0)": ("text", 0.0, 0)}
+    configurations.update({f"dev-selected ({features})": best[features] for features in FEATURE_SETS})
     matrices = {features: vectorize(features, X_all, X_test) for features in {f for f, _, _ in configurations.values()}}
     for name, (features, threshold, min_root) in configurations.items():
         F_all, F_test = matrices[features]

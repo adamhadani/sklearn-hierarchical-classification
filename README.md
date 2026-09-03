@@ -145,12 +145,21 @@ with `LinearSVC` base classifiers; every tuned setting (training strategy, thres
 | Published SVM, per-category tuned thresholds (Lewis et al. 2004) | 0.816 | 0.607 | | | |
 
 `benchmarks/germeval2019_benchmark.py` runs GermEval 2019 Task 1 (German book blurbs, 343 genres in a
-4-level tree, 14,548 / 2,079 / 4,157 train / dev / test), whose winning system used this library.
-With inclusive training, a decision threshold and root fallback chosen on the development split, the
-test subtask-B micro-F1 is 0.651 (siblings-trained nodes: 0.634; published TwistBytes system, which
-ensembled three TF-IDF views fitted per node rather than one shared vocabulary, 0.677). Per-class
-thresholds are not used there: most labels have too few development positives for them, and a single
-threshold wins in cross-tuning.
+4-level tree, 14,548 / 2,079 / 4,157 train / dev / test), whose winning system used this library. The
+feature set, decision threshold and root fallback are chosen on the development split, the model is
+refitted on train + dev and the test set scored once per configuration:
+
+| Configuration (inclusive-trained `LinearSVC` nodes) | subtask B micro-F1 | subtask A micro-F1 |
+|---|---:|---:|
+| Title + blurb TF-IDF (word 1-2 grams, char 2-3 grams), threshold 0 | 0.590 | 0.819 |
+| Same, dev-selected threshold -0.40 and root fallback | 0.651 | 0.807 |
+| Plus metadata views (title, author tokens, ISBN publisher prefixes), threshold -0.35, root fallback | **0.725** | **0.872** |
+| Published TwistBytes system (this library, three TF-IDF views fitted per node) | 0.677 | 0.863 (flat model) |
+
+The metadata fields were part of the task data (the task report lists several teams using them);
+author and imprint identify the genre for most of a publisher's catalogue. Per-class thresholds are
+not used here: most labels have too few development positives for them, and a single threshold wins
+in cross-tuning.
 
     uv run python benchmarks/bench.py --help
     uv run python benchmarks/rcv1_benchmark.py
