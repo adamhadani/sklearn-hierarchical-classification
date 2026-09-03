@@ -16,7 +16,7 @@ Every tool's configuration lives in `pyproject.toml`; linting, formatting, type 
 the tests are enforced through [pre-commit](https://pre-commit.com/), locally and in CI.
 
 ```bash
-git clone https://github.com/adamhadani/sklearn-hierarchical-classification.git
+git clone https://github.com/promptromp/sklearn-hierarchical-classification.git
 cd sklearn-hierarchical-classification
 uv sync --dev
 uv run pre-commit install

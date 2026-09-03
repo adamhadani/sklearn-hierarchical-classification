@@ -12,7 +12,7 @@ hierarchy top-down.
 {: .fs-6 .fw-300 }
 
 [Get started](usage){: .btn .btn-primary .fs-5 .mb-4 .mb-md-0 .mr-2 }
-[View on GitHub](https://github.com/adamhadani/sklearn-hierarchical-classification){: .btn .fs-5 .mb-4 .mb-md-0 }
+[View on GitHub](https://github.com/promptromp/sklearn-hierarchical-classification){: .btn .fs-5 .mb-4 .mb-md-0 }
 
 ---
 

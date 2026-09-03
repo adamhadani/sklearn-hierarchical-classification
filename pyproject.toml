@@ -39,9 +39,9 @@ dependencies = [
 dynamic = ["version"]
 
 [project.urls]
-Homepage = "https://github.com/adamhadani/sklearn-hierarchical-classification"
-Documentation = "https://adamhadani.github.io/sklearn-hierarchical-classification/"
-Issues = "https://github.com/adamhadani/sklearn-hierarchical-classification/issues"
+Homepage = "https://github.com/promptromp/sklearn-hierarchical-classification"
+Documentation = "https://promptromp.github.io/sklearn-hierarchical-classification/"
+Issues = "https://github.com/promptromp/sklearn-hierarchical-classification/issues"
 
 [dependency-groups]
 dev = [

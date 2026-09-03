@@ -2,7 +2,7 @@
 # .github/workflows/publish-docs.yml; preview locally with `bundle exec jekyll serve`).
 title: sklearn-hierarchical-classification
 description: "Hierarchical classification for scikit-learn: local classifiers over a class tree or DAG, top-down prediction, multi-label thresholds and hierarchical metrics."
-url: https://adamhadani.github.io
+url: https://promptromp.github.io
 baseurl: /sklearn-hierarchical-classification
 
 remote_theme: just-the-docs/just-the-docs
@@ -14,7 +14,7 @@ heading_anchors: true
 color_scheme: light
 
 aux_links:
-  GitHub: https://github.com/adamhadani/sklearn-hierarchical-classification
+  GitHub: https://github.com/promptromp/sklearn-hierarchical-classification
   PyPI: https://pypi.org/project/sklearn-hierarchical-classification/
 aux_links_new_tab: true
 
