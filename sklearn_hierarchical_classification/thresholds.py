@@ -82,25 +82,30 @@ def routed_thresholds(scores, y, graph, classes, root=ROOT, scored=None, min_roo
     scores, y, scored = _validated(scores, y, scored)
     thresholds = np.full(y.shape[1], np.inf)
 
-    def tune(j, routed):
-        rows = np.flatnonzero(routed & scored[:, j])
+    def tune(j, rows):
         thresholds[j] = best_f1_threshold(scores[rows, j], y[rows, j])
         return thresholds[j]
 
-    _route(scores, graph, classes, root, min_root, tune)
+    _route(scores, scored, graph, classes, root, min_root, tune)
     return thresholds
 
 
-def route(scores, thresholds, graph, classes, root=ROOT, min_root=0):
+def route(scores, thresholds, graph, classes, root=ROOT, min_root=0, scored=None):
     """
     Emulate `HierarchicalClassifier`'s multi-label walk on an all-node score matrix.
 
     Given the scores of a `-inf` prediction (every learned node visited), predicts class j for the
-    samples with `scores[:, j] > thresholds[j]` whose parent (any parent, on a DAG) is predicted;
-    children of a root are considered for every sample, and `min_root` forces each sample's best
-    scoring root children when fewer are predicted, as `mlb_min_root_predictions` does. This is what
-    the classifier predicts with the same thresholds, which lets threshold policies be compared on
-    held-out scores without refitting.
+    samples with `scores[:, j] > thresholds[j]` that a predicted parent routes there. Children of
+    the root (including a class that is also some other node's child) are considered for every
+    sample, and `min_root` forces each sample's best scoring root children when fewer are
+    predicted, as `mlb_min_root_predictions` does. Cells not in `scored` are placeholders for
+    classes that were not learned and are never predicted nor ranked, matching the classifier,
+    which routes only to children learned at fit. Nodes unreachable from `root` are never predicted.
+
+    On a tree this is exactly what the classifier predicts with the same thresholds, which lets
+    threshold policies be compared on held-out scores without refitting (tests pin it to `predict`).
+    On a DAG it predicts a superset: the matrix holds each class's best score over all its parents,
+    so a sample can be routed to a class here through a parent that rejects it at prediction time.
 
     Parameters
     ----------
@@ -111,6 +116,7 @@ def route(scores, thresholds, graph, classes, root=ROOT, min_root=0):
         The hierarchy node of each column of `scores`.
     root : node, optional
     min_root : int, optional
+    scored : array-like of bool, shape = [n_samples, n_classes], optional
 
     Returns
     -------
@@ -118,8 +124,9 @@ def route(scores, thresholds, graph, classes, root=ROOT, min_root=0):
 
     """
     scores = np.asarray(scores, dtype=np.float64)
+    scored = np.ones(scores.shape, dtype=bool) if scored is None else np.asarray(scored, dtype=bool)
     thresholds = np.broadcast_to(np.asarray(thresholds, dtype=np.float64), (scores.shape[1],))
-    return _route(scores, graph, classes, root, min_root, lambda j, routed: thresholds[j]).astype(int)
+    return _route(scores, scored, graph, classes, root, min_root, lambda j, rows: thresholds[j]).astype(int)
 
 
 def label_cardinality_threshold(scores, target_cardinality, candidates=None):
@@ -175,29 +182,30 @@ def _column_index(classes, n_classes):
     return {node: j for j, node in enumerate(classes)}
 
 
-def _route(scores, graph, classes, root, min_root, threshold_for):
+def _route(scores, scored, graph, classes, root, min_root, threshold_for):
     """The top-down walk shared by `route` and `routed_thresholds`: classes are visited parents first,
-    `threshold_for(column, routed)` is asked for each one's threshold given the mask of samples its parents
-    route to it, and the samples above that threshold are predicted. Children of a root come first, all of
-    them before the fallback forces `min_root` of them per sample. Returns the boolean prediction matrix."""
+    `threshold_for(column, rows)` is asked for each one's threshold given the scored rows its parents route
+    to it, and the rows above that threshold are predicted. The root's children come first, all of them
+    before the fallback forces `min_root` of them per sample. Returns the boolean prediction matrix."""
     column = _column_index(classes, scores.shape[1])
     predicted = np.zeros(scores.shape, dtype=bool)
+    top_nodes = set(graph.successors(root)) if root in graph else {n for n, degree in graph.in_degree() if degree == 0}
     order = [node for node in topological_sort(graph) if node in column]
-    top = [column[node] for node in order if not _parents(graph, node, root)]
-    everyone = np.ones(scores.shape[0], dtype=bool)
+    top = sorted(column[node] for node in order if node in top_nodes)  # column order: how ties are broken
     for j in top:
-        predicted[:, j] = scores[:, j] > threshold_for(j, everyone)
+        rows = np.flatnonzero(scored[:, j])
+        predicted[rows, j] = scores[rows, j] > threshold_for(j, rows)
     if min_root and top:
         short = np.flatnonzero(predicted[:, top].sum(axis=1) < min_root)
-        predicted[np.ix_(short, top)] |= top_k_mask(scores[np.ix_(short, top)], min_root)
+        block = np.ix_(short, top)
+        predicted[block] |= top_k_mask(np.where(scored[block], scores[block], -np.inf), min_root) & scored[block]
     for node in order:
-        parents = _parents(graph, node, root)
-        if not parents:
+        if node in top_nodes:
             continue
-        parent_columns = [column[p] for p in parents if p in column]
-        routed = predicted[:, parent_columns].any(axis=1) if parent_columns else ~everyone
+        parents = [column[parent] for parent in graph.predecessors(node) if parent in column]
         j = column[node]
-        predicted[:, j] = routed & (scores[:, j] > threshold_for(j, routed))
+        rows = np.flatnonzero(predicted[:, parents].any(axis=1) & scored[:, j])
+        predicted[rows, j] = scores[rows, j] > threshold_for(j, rows)
     return predicted
 
 

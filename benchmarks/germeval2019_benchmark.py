@@ -157,11 +157,12 @@ def main():
     grid = np.round(np.arange(-0.5, 0.21, 0.05), 2)
     dev_f1 = {}
     for features in FEATURE_SETS:
-        start = time.perf_counter()
         F_train, F_dev = vectorize(features, X_train, X_dev)
+        start = time.perf_counter()
         clf = make_classifier(graph, mlb, args.C, strategy, -np.inf).fit(F_train, Y_train)
         scores_dev = clf.predict_proba(F_dev)
-        print(f"{features} features: fit on train + score dev {time.perf_counter() - start:.0f}s", flush=True)
+        t_dev = time.perf_counter() - start
+        print(f"{features} features: classifier fit on train + score dev {t_dev:.0f}s", flush=True)
         for min_root in (0, 1):
             for t in grid:
                 dev_f1[(features, t, min_root)] = micro_f1(Y_dev, route(scores_dev, t, graph, nodes, min_root=min_root))
@@ -187,7 +188,7 @@ def main():
             f"subtask B micro-F1 {micro_f1(Y_test, Y_pred):.4f}   "
             f"subtask A micro-F1 {micro_f1(Y_test[:, root_columns], Y_pred[:, root_columns]):.4f}   "
             f"labels/blurb {Y_pred.sum(1).mean():.2f}  no-label {np.mean(Y_pred.sum(1) == 0):.3f}   "
-            f"fit {t_fit:.0f}s predict {t_predict:.1f}s",
+            f"classifier fit {t_fit:.0f}s predict {t_predict:.1f}s (TF-IDF excluded)",
             flush=True,
         )
     print("published test scores: TwistBytes (this library, t=-0.25) subtask B 0.6767 (1st of 10);")
