@@ -363,9 +363,9 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
     def __sklearn_clone__(self):
         """Clone like `sklearn.base.clone`, except that a fitted `mlb` is passed on as is: it names the
         classes of `y` and is never fitted here, so resetting it would leave the clone unable to fit."""
-        params = self.get_params(deep=False)
-        mlb = params.pop("mlb")
-        return type(self)(**{name: clone(value, safe=False) for name, value in params.items()}, mlb=mlb)
+        cloned = super().__sklearn_clone__()
+        cloned.mlb = self.mlb
+        return cloned
 
     def _check_hierarchy(self):
         """The hierarchy must be a DAG containing `root`; nodes the root cannot reach are never predicted."""
@@ -383,13 +383,18 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             )
 
     def _check_labels(self, y):
-        """Labels of `y` (in multi-label mode, classes with a positive) that are not hierarchy nodes train
-        nothing: warn, since a typo in a label would otherwise silently cost its samples."""
-        labels = np.unique(y) if self.mlb is None else np.asarray(self.mlb.classes_)[np.asarray(y).any(axis=0)]
+        """Labels of `y` (in multi-label mode, classes with a positive) that are not hierarchy nodes are
+        ignored: warn, since a typo in a label would otherwise silently cost its samples."""
+        if self.class_hierarchy is None:
+            return  # the flat hierarchy was just built from these labels
+        if self.mlb is None:
+            labels = np.unique(y).tolist()
+        else:
+            labels = np.asarray(self.mlb.classes_)[np.asarray(y).any(axis=0)].tolist()
         unknown = [label for label in labels if label not in self.graph_]
         if unknown:
             warnings.warn(
-                f"Labels {unknown} of `y` are not nodes of the class hierarchy; their samples are not used",
+                f"Labels {unknown} of `y` are not nodes of the class hierarchy and are ignored",
                 UserWarning,
                 stacklevel=3,
             )

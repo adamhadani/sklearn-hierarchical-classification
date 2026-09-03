@@ -27,7 +27,7 @@ from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import cross_val_predict, train_test_split
 from sklearn.multiclass import OneVsRestClassifier
 from sklearn.naive_bayes import GaussianNB, MultinomialNB
 from sklearn.neighbors import KNeighborsClassifier
@@ -901,6 +901,15 @@ def test_clone_keeps_the_fitted_binarizer():
 
     assert_that(cloned.mlb.classes_.tolist(), is_(equal_to(clf.mlb.classes_.tolist())))
     assert_that(cloned.fit(X, y).predict(X).tolist(), is_(equal_to(y_pred.tolist())))
+
+
+def test_multi_label_classifier_works_with_cross_validation():
+    """The clone-based tools (cross-validation, grid search) fit clones of a multi-label estimator."""
+    clf, X, y, _ = make_fruit_veg_mlb_classifier()
+
+    y_oof = cross_val_predict(clf, X, y, cv=2)
+
+    assert_that(y_oof.shape, is_(equal_to(y.shape)))
 
 
 def test_zero_stopping_threshold_is_accepted():

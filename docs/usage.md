@@ -49,8 +49,8 @@ Use node identifiers of a single type. Predictions are returned as a numpy array
 
 `fit` checks the hierarchy before training: it must contain `root` and be acyclic (a
 `ValueError` otherwise), and nodes the root cannot reach raise a warning since they can never
-be predicted. Labels of `y` that are not hierarchy nodes also raise a warning: their samples
-train nothing, which is what a typo in a label would otherwise cost silently.
+be predicted. Labels of `y` that are not hierarchy nodes also raise a warning: they are ignored,
+which is what a typo in a label would otherwise cost silently.
 
 ### DAGs
 
