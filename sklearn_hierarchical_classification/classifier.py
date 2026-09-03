@@ -3,8 +3,10 @@ Hierarchical classifier interface.
 
 """
 
+import warnings
+
 import numpy as np
-from networkx import DiGraph, dfs_preorder_nodes, topological_sort
+from networkx import DiGraph, descendants, dfs_preorder_nodes, is_directed_acyclic_graph, topological_sort
 from scipy.sparse import issparse
 from sklearn.base import (
     BaseEstimator,
@@ -301,6 +303,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         # Initialize NetworkX Graph from input class hierarchy
         self.class_hierarchy_ = self.class_hierarchy or make_flat_hierarchy(list(np.unique(y)), root=self.root)
         self.graph_ = DiGraph(self.class_hierarchy_)
+        self._check_hierarchy()
+        self._check_labels(y)
         self.classes_ = [node for node in self.graph_.nodes() if node != self.root]
 
         with self._progress(total=self.graph_.number_of_nodes(), desc="Training local classifiers") as progress:
@@ -355,6 +359,40 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         X = self._check_predict_input(X)
         n_columns = len(self.mlb.classes_) if self.mlb is not None else self.n_classes_
         return self._predict_top_down(X, n_columns=n_columns).class_proba
+
+    def __sklearn_clone__(self):
+        """Clone like `sklearn.base.clone`, except that a fitted `mlb` is passed on as is: it names the
+        classes of `y` and is never fitted here, so resetting it would leave the clone unable to fit."""
+        params = self.get_params(deep=False)
+        mlb = params.pop("mlb")
+        return type(self)(**{name: clone(value, safe=False) for name, value in params.items()}, mlb=mlb)
+
+    def _check_hierarchy(self):
+        """The hierarchy must be a DAG containing `root`; nodes the root cannot reach are never predicted."""
+        if self.root not in self.graph_:
+            raise ValueError(f"'root' {self.root!r} is not a node of the class hierarchy")
+        if not is_directed_acyclic_graph(self.graph_):
+            raise ValueError("The class hierarchy contains a cycle; it must be a tree or a DAG")
+        unreachable = sorted(set(self.graph_.nodes) - descendants(self.graph_, self.root) - {self.root}, key=str)
+        if unreachable:
+            warnings.warn(
+                f"Nodes {unreachable} of the class hierarchy cannot be reached from the root {self.root!r} and "
+                "will never be predicted",
+                UserWarning,
+                stacklevel=3,
+            )
+
+    def _check_labels(self, y):
+        """Labels of `y` (in multi-label mode, classes with a positive) that are not hierarchy nodes train
+        nothing: warn, since a typo in a label would otherwise silently cost its samples."""
+        labels = np.unique(y) if self.mlb is None else np.asarray(self.mlb.classes_)[np.asarray(y).any(axis=0)]
+        unknown = [label for label in labels if label not in self.graph_]
+        if unknown:
+            warnings.warn(
+                f"Labels {unknown} of `y` are not nodes of the class hierarchy; their samples are not used",
+                UserWarning,
+                stacklevel=3,
+            )
 
     def _check_predict_input(self, X):
         if self.feature_extraction == "raw":

@@ -22,6 +22,7 @@ from networkx import DiGraph, dfs_preorder_nodes
 from numpy import where
 from scipy.sparse import csr_matrix
 from sklearn import svm
+from sklearn.base import clone
 from sklearn.calibration import CalibratedClassifierCV
 from sklearn.feature_extraction.text import CountVectorizer
 from sklearn.linear_model import LogisticRegression
@@ -889,3 +890,62 @@ def test_lcn_still_accepts_inclusive_without_mlb():
     clf, (X, y) = make_classifier_and_data(algorithm="lcn", training_strategy="inclusive")
 
     clf.fit(X, y)
+
+
+def test_clone_keeps_the_fitted_binarizer():
+    """`sklearn.base.clone` must not reset the fitted `mlb`, or cross-validation and grid search break."""
+    clf, X, y, _ = make_fruit_veg_mlb_classifier()
+    y_pred = clf.fit(X, y).predict(X)
+
+    cloned = clone(clf)
+
+    assert_that(cloned.mlb.classes_.tolist(), is_(equal_to(clf.mlb.classes_.tolist())))
+    assert_that(cloned.fit(X, y).predict(X).tolist(), is_(equal_to(y_pred.tolist())))
+
+
+def test_zero_stopping_threshold_is_accepted():
+    clf, (X, y) = make_classifier_and_data(n_classes=4, prediction_depth="nmlnp", stopping_criteria=0.0)
+
+    clf.fit(X, y)
+
+    assert_that(len(clf.predict(X)), is_(equal_to(len(y))))
+
+
+def test_labels_outside_the_hierarchy_warn():
+    clf, (X, y) = make_classifier_and_data(n_classes=3, class_hierarchy={ROOT: ["0", "1", "2"]})
+    y = y.astype(str)
+    y[:3] = "not-a-node"
+
+    with pytest.warns(UserWarning, match="not-a-node"):
+        clf.fit(X, y)
+
+
+def test_positive_binarizer_classes_outside_the_hierarchy_warn():
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier()
+    stray = MultiLabelBinarizer().fit([[*mlb.classes_, "stray"]])
+    y_stray = np.column_stack([y, np.ones(len(y), dtype=int)])[:, np.argsort([*mlb.classes_, "stray"])]
+    clf.set_params(mlb=stray)
+
+    with pytest.warns(UserWarning, match="stray"):
+        clf.fit(X, y_stray)
+
+
+def test_cyclic_hierarchy_is_rejected_at_fit():
+    clf, (X, y) = make_classifier_and_data(n_classes=3, class_hierarchy={ROOT: [0, 1, 2], 1: [2], 2: [1]})
+
+    with pytest.raises(ValueError, match="cycle"):
+        clf.fit(X, y)
+
+
+def test_root_missing_from_the_hierarchy_is_rejected():
+    clf, (X, y) = make_classifier_and_data(n_classes=3, root="nope")
+
+    with pytest.raises(ValueError, match="nope"):
+        clf.fit(X, y)
+
+
+def test_nodes_unreachable_from_the_root_warn():
+    clf, (X, y) = make_classifier_and_data(n_classes=3, class_hierarchy={ROOT: [0, 1, 2], "stray": ["orphan"]})
+
+    with pytest.warns(UserWarning, match="stray"):
+        clf.fit(X, y)
