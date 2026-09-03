@@ -212,7 +212,7 @@ def test_route_reproduces_the_classifier_walk_on_an_all_node_score_matrix():
     emulated = route(scores, thresholds, clf.graph_, mlb.classes_, min_root=1)
 
     assert_that(emulated.tolist(), is_(equal_to(clf.predict(X).tolist())))
-    assert_that(emulated.sum() > 0, is_(True))
+    assert_that(bool(emulated.sum() > 0), is_(True))
 
 
 def test_routed_thresholds_model_the_root_fallback():
@@ -312,7 +312,7 @@ def test_route_predicts_a_superset_of_the_classifier_on_a_dag():
 
     emulated, native = route(scores, 0.5, graph, mlb.classes_), clf.predict(X)
 
-    assert_that(np.all(emulated >= native), is_(True))
+    assert_that(bool(np.all(emulated >= native)), is_(True))
     assert_that(emulated[:, :2].tolist(), is_(equal_to(native[:, :2].tolist())))  # exact at the roots' children
 
 

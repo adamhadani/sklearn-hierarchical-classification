@@ -135,9 +135,16 @@ go in the pre-commit config, never as bare workflow steps. Two CI jobs test clai
 `UV_RESOLUTION=lowest-direct` (job-wide: a resolution mode given to `uv sync` alone is undone by
 the next `uv run`, which re-locks), so a declared lower bound is never lower than a release the
 suite actually passes on (raise it when relying on a newer API); `package` installs the built
-wheel without the dev dependencies and checks it imports, fits and does not contain the tests.
+wheel without the dev dependencies and checks it imports, fits, contains `py.typed` and not the tests.
 Coverage `fail_under = 95` (statements and branches together) applies to every `pytest --cov`
 run, including the pre-commit hook that skips the slow test; the margin is under a point.
+
+**The public surface is annotated and mypy checks every body** (`check_untyped_defs`), so
+`self.mlb` is `MultiLabelBinarizer | None` to the checker: multi-label code paths read the binarizer
+through the `_mlb` property (non-optional, raises if unset), or as `self.mlb.classes_` in the same
+expression as an `is not None` test, which mypy narrows. `X`/`y` are typed with the module aliases
+`Features`/`Targets`, which include scipy sparse types (`ArrayLike` alone does not). A parameter
+reassigned from a call (`np.asarray`, `check_array`) narrows only when the callee is annotated.
 
 **Ruff rule selection uses `extend-select`, not `select`**, layering on top of ruff's
 default rule set. All tool config lives in `pyproject.toml`; do not reintroduce

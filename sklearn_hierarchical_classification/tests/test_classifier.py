@@ -37,7 +37,7 @@ from sklearn.svm import LinearSVC
 from sklearn.utils.estimator_checks import check_estimator
 
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
-from sklearn_hierarchical_classification.constants import CLASSIFIER, DEFAULT, ROOT, TRAINED_CLASSES
+from sklearn_hierarchical_classification.constants import CLASSIFIER, DEFAULT, METAFEATURES, ROOT, TRAINED_CLASSES
 from sklearn_hierarchical_classification.tests.fixtures import (
     make_classifier,
     make_classifier_and_data,
@@ -70,12 +70,10 @@ def test_fitted_attributes():
     assert_that(clf.classes_, contains_inanyorder(*range(n_classes)))
     assert_that(clf.n_classes_, is_(equal_to(n_classes)))
     assert_that(
-        clf.graph_.nodes[ROOT],
+        clf.graph_.nodes[ROOT][METAFEATURES],
         has_entries(
-            metafeatures=has_entries(
-                n_samples=X.shape[0],
-                n_targets=n_classes,
-            ),
+            n_samples=X.shape[0],
+            n_targets=n_classes,
         ),
     )
 
@@ -902,6 +900,35 @@ def test_lcn_still_accepts_inclusive_without_mlb():
 
     with pytest.warns(FutureWarning, match="'inclusive'"):
         clf.fit(X, y)
+
+
+def test_base_estimator_factory_is_called_per_node():
+    """A callable `base_estimator` is asked for the estimator of every trained node."""
+    clf, (X, y) = make_classifier_and_data(base_estimator=lambda node_id, graph: LogisticRegression(max_iter=500))
+
+    clf.fit(X, y)
+
+    assert_that(type(clf.graph_.nodes[ROOT][CLASSIFIER]).__name__, equal_to("LogisticRegression"))
+
+
+def test_raw_mode_rejects_mismatched_sample_and_target_counts():
+    """In raw mode X is any sequence, so the only shape check is that it is as long as y."""
+    X, labels, class_hierarchy = make_fruit_veg_raw_data()
+    clf = HierarchicalClassifier(
+        base_estimator=make_pipeline(CountVectorizer(), LogisticRegression()),
+        class_hierarchy=class_hierarchy,
+        feature_extraction="raw",
+    )
+    y = [leaf for leaf, _ in labels]
+
+    assert_that(calling(clf.fit).with_args(X=X[:-1], y=y), raises(ValueError, "len\\(X\\)"))
+
+
+def test_base_estimator_of_the_wrong_kind_is_rejected():
+    """Anything but an estimator, a dict of estimators or a factory callable is a clear error at fit."""
+    clf, (X, y) = make_classifier_and_data(base_estimator=42)
+
+    assert_that(calling(clf.fit).with_args(X=X, y=y), raises(TypeError, "base_estimator"))
 
 
 def test_clone_keeps_the_fitted_binarizer():

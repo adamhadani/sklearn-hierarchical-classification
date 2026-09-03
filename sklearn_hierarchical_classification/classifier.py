@@ -4,10 +4,13 @@ Hierarchical classifier interface.
 """
 
 import warnings
+from collections.abc import Callable, Hashable, Iterable, Mapping, Sequence
+from typing import Any, Literal, Self, TypeAlias
 
 import numpy as np
 from networkx import DiGraph, descendants, dfs_preorder_nodes, is_directed_acyclic_graph, topological_sort
-from scipy.sparse import issparse
+from numpy.typing import ArrayLike, NDArray
+from scipy.sparse import issparse, sparray, spmatrix
 from sklearn.base import (
     BaseEstimator,
     ClassifierMixin,
@@ -16,6 +19,7 @@ from sklearn.base import (
 )
 from sklearn.dummy import DummyClassifier
 from sklearn.linear_model import LogisticRegression
+from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_array, check_is_fitted, validate_data
 
@@ -31,6 +35,12 @@ from sklearn_hierarchical_classification.decorators import logger
 from sklearn_hierarchical_classification.dummy import DummyProgress
 from sklearn_hierarchical_classification.graph import children_by_descendant, make_flat_hierarchy, rollup_targets
 from sklearn_hierarchical_classification.validation import is_estimator, validate_parameters
+
+
+# What `fit` and `predict` take as X: a dense or sparse matrix, or in "raw" mode any sequence of samples
+Features: TypeAlias = ArrayLike | spmatrix | sparray | Sequence[Any]
+# What `fit` takes as y: labels, or a dense or sparse indicator matrix in multi-label mode
+Targets: TypeAlias = ArrayLike | spmatrix | sparray
 
 
 class _PredictionState:
@@ -65,11 +75,16 @@ class _PredictionState:
 
     def max_scores(self, rows, columns, scores):
         """Record scores, keeping the highest for a cell scored by several parents (unscored cells stay 0)."""
-        if self.class_proba is None:
+        if self.class_proba is None or self.scored is None:
             return
         cells = (rows[:, None], columns)
         self.class_proba[cells] = np.where(self.scored[cells], np.maximum(self.class_proba[cells], scores), scores)
         self.scored[cells] = True
+
+
+def _dense(y: Any) -> Any:
+    """A binary indicator matrix may be sparse (e.g. from MultiLabelBinarizer(sparse_output=True) or fetch_rcv1)."""
+    return y.toarray() if issparse(y) else y
 
 
 def _rows_by_label(y, columns=None):
@@ -226,20 +241,23 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
     def __init__(
         self,
-        base_estimator=None,
-        class_hierarchy=None,
-        prediction_depth="mlnp",
-        algorithm="lcpn",
-        training_strategy=None,
-        stopping_criteria=None,
-        root=ROOT,
-        progress_wrapper=None,
-        feature_extraction="preprocessed",
-        mlb=None,
-        mlb_prediction_threshold=0.0,
-        mlb_min_root_predictions=0,
-        use_decision_function=False,
-    ):
+        base_estimator: BaseEstimator | Mapping[Hashable, BaseEstimator] | Callable[..., BaseEstimator] | None = None,
+        class_hierarchy: DiGraph | Mapping[Hashable, Iterable[Hashable]] | None = None,
+        prediction_depth: Literal["mlnp", "nmlnp"] = "mlnp",
+        algorithm: Literal["lcpn", "lcn"] = "lcpn",
+        training_strategy: Literal[
+            "siblings", "inclusive", "exclusive", "less_exclusive", "less_inclusive", "exclusive_siblings"
+        ]
+        | None = None,
+        stopping_criteria: float | Callable[..., bool] | None = None,
+        root: Hashable = ROOT,
+        progress_wrapper: Callable[..., Any] | None = None,
+        feature_extraction: Literal["preprocessed", "raw"] = "preprocessed",
+        mlb: MultiLabelBinarizer | None = None,
+        mlb_prediction_threshold: float | ArrayLike = 0.0,
+        mlb_min_root_predictions: int = 0,
+        use_decision_function: bool = False,
+    ) -> None:
         self.base_estimator = base_estimator
         self.class_hierarchy = class_hierarchy
         self.prediction_depth = prediction_depth
@@ -259,7 +277,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         tags.input_tags.sparse = True
         return tags
 
-    def fit(self, X, y=None):
+    def fit(self, X: Features, y: Targets | None = None) -> Self:
         """Fit underlying classifiers.
 
         Parameters
@@ -276,9 +294,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         self
 
         """
-        if self.mlb is not None and issparse(y):
-            # A binary indicator matrix (e.g. from MultiLabelBinarizer(sparse_output=True) or fetch_rcv1)
-            y = y.toarray()
+        if self.mlb is not None:
+            y = _dense(y)
 
         if self.feature_extraction == "raw":
             # In raw mode, only validate targets (y) format and
@@ -286,7 +303,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             # X will in general not be a 2D feature matrix, but rather the raw training examples,
             # e.g. text snippets or images.
             y = check_array(y, ensure_all_finite=True, ensure_2d=False, dtype=None)
-            if len(X) != y.shape[0]:
+            if self._n_samples(X) != np.shape(y)[0]:
                 raise ValueError("bad input shape: len(X) != y.shape[0]")
         else:
             X, y = validate_data(self, X, y, accept_sparse="csr", multi_output=self.mlb is not None)
@@ -311,7 +328,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
         return self
 
-    def predict(self, X):
+    def predict(self, X: Features) -> NDArray[Any]:
         """Predict multi-class targets using underlying estimators.
 
         Parameters
@@ -337,7 +354,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             return self._visits_as_indicator(state, n_samples=self._n_samples(X))
         return np.asarray(state.last.tolist())
 
-    def predict_proba(self, X):
+    def predict_proba(self, X: Features) -> NDArray[np.float64]:
         """
         Return probability estimates for the test vector X.
 
@@ -359,7 +376,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         n_columns = len(self.mlb.classes_) if self.mlb is not None else self.n_classes_
         return self._predict_top_down(X, n_columns=n_columns).class_proba
 
-    def __sklearn_clone__(self):
+    def __sklearn_clone__(self) -> Self:
         """Clone like `sklearn.base.clone`, except that a fitted `mlb` is passed on as is: it names the
         classes of `y` and is never fitted here, so resetting it would leave the clone unable to fit."""
         cloned = super().__sklearn_clone__()
@@ -440,7 +457,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
     def _column_index(self):
         """Score-matrix column of each class: positions of `classes_`, or of the `mlb` columns."""
         if self.mlb is not None:
-            return {column: column for column in range(len(self.mlb.classes_))}
+            return {column: column for column in range(len(self._mlb.classes_))}
         return {class_: column for column, class_ in enumerate(self.classes_)}
 
     def _descend_single_label(self, node_id, clf, rows, scores, state):
@@ -462,7 +479,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         # samples: a one-vs-rest classifier also carries (constant) predictors for every other column
         children = set(self.graph_.successors(node_id))
         children &= self.graph_.nodes[node_id].get(TRAINED_CLASSES, children)
-        local = [local_column for local_column, column in enumerate(columns) if self.mlb.classes_[column] in children]
+        classes = self._mlb.classes_
+        local = [local_column for local_column, column in enumerate(columns) if classes[column] in children]
         child_scores = scores[:, local]
         state.max_scores(rows, columns[local], child_scores)
         selected = child_scores > state.thresholds[columns[local]]
@@ -473,7 +491,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
         next_nodes = []
         for k, local_column in enumerate(local):
-            child = self.mlb.classes_[columns[local_column]]
+            child = classes[columns[local_column]]
             if selected[:, k].any():
                 next_nodes.append((child, state.record(child, rows[selected[:, k]])))
         return next_nodes
@@ -484,7 +502,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             thresholds = np.asarray(self.mlb_prediction_threshold, dtype=np.float64)
         except (TypeError, ValueError):
             raise ValueError("'mlb_prediction_threshold' must be a float or a 1-D array-like of floats") from None
-        n_classes = len(self.mlb.classes_)
+        n_classes = len(self._mlb.classes_)
         if thresholds.ndim > 1 or np.isnan(thresholds).any() or (thresholds.ndim == 1 and len(thresholds) != n_classes):
             raise ValueError(
                 f"'mlb_prediction_threshold' must be a float or one threshold per class ({n_classes}, in the order "
@@ -493,8 +511,9 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         return np.broadcast_to(thresholds, (n_classes,))
 
     def _visits_as_indicator(self, state, n_samples):
-        indicator = np.zeros((n_samples, len(self.mlb.classes_)), dtype=int)
-        column_of = {label: column for column, label in enumerate(self.mlb.classes_)}
+        classes = self._mlb.classes_
+        indicator = np.zeros((n_samples, len(classes)), dtype=np.int_)
+        column_of = {label: column for column, label in enumerate(classes)}
         for node, rows in state.visits:
             indicator[rows, column_of[node]] = 1
         return indicator
@@ -547,8 +566,15 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         return scores
 
     @property
-    def n_classes_(self):
+    def n_classes_(self) -> int:
         return len(self.classes_)
+
+    @property
+    def _mlb(self) -> MultiLabelBinarizer:
+        """The binarizer, on the multi-label code paths (`_check_parameters` gates them on `mlb`)."""
+        if self.mlb is None:
+            raise ValueError("Multi-label operation requires `mlb`")
+        return self.mlb
 
     def _check_parameters(self):
         """Check the parameter assignment is valid and internally consistent."""
@@ -687,8 +713,9 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
 
     def _inclusive_targets(self, y, subtree_rows, child_of):
         """Indicator targets over every sample: the subtree's roll-up, zero rows elsewhere."""
-        y_ = np.zeros((y.shape[0], len(self.mlb.classes_)), dtype=int)
-        rolled_up = self.mlb.transform(rollup_targets(child_of, y[subtree_rows], mlb=self.mlb))
+        mlb = self._mlb
+        y_ = np.zeros((y.shape[0], len(mlb.classes_)), dtype=np.int_)
+        rolled_up = mlb.transform(rollup_targets(child_of, y[subtree_rows], mlb=mlb))
         y_[subtree_rows] = rolled_up.toarray() if issparse(rolled_up) else rolled_up
         return y_
 
@@ -716,7 +743,8 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         return self._rows(X_, positions), np.asarray(flatten_list(children[k] for k in inverse))
 
     def _roll_up_multi_label(self, X_, y_rows, child_of):
-        y_ = self.mlb.transform(rollup_targets(child_of, y_rows, mlb=self.mlb))
+        mlb = self._mlb
+        y_ = mlb.transform(rollup_targets(child_of, y_rows, mlb=mlb))
         if issparse(y_):
             y_ = y_.toarray()
         # Drop samples whose rolled-up children are unknown to the binarizer (all-zero rows)
@@ -749,7 +777,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             # No base estimator specified by user, try to pick best one
             base_estimator = self._make_base_estimator(node_id)
 
-        elif isinstance(self.base_estimator, dict):
+        elif isinstance(self.base_estimator, Mapping):
             # User provided dictionary mapping nodes to estimators
             if node_id in self.base_estimator:
                 base_estimator = self.base_estimator[node_id]
@@ -760,9 +788,12 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             # Single base estimator object, return a copy
             base_estimator = self.base_estimator
 
-        else:
-            # By default, treat as callable factory
+        elif callable(self.base_estimator):
+            # A factory of estimators
             base_estimator = self.base_estimator(node_id=node_id, graph=self.graph_)
+
+        else:
+            raise TypeError("'base_estimator' must be an estimator, a dict of estimators by node, or a callable")
 
         return clone(base_estimator)
 

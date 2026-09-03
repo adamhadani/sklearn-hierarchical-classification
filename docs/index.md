@@ -23,7 +23,8 @@ a hierarchical one, following the "local classifier per parent node" scheme of S
 Freitas (2011).
 
 - **scikit-learn compatible.** `fit` / `predict` / `predict_proba`, `get_params` /
-  `set_params`, pickling, sparse input, and scikit-learn's own estimator checks.
+  `set_params`, pickling, sparse input, scikit-learn's own estimator checks, and type
+  annotations on the public surface.
 - **Any base classifier**, one per node if you like, or a full `Pipeline` over raw inputs
   such as text.
 - **Multi-label hierarchies** through a `MultiLabelBinarizer`, with per-class decision
