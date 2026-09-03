@@ -11,20 +11,21 @@ decision threshold to trade precision for recall.
 Features are TF-IDF views fitted once on the training text and shared by every node (the winning
 system fitted its vocabularies per node, on the node's own subtree; its word 1-7-gram views were
 measured here and do not beat the word 1-2 + character 2-3 grams used). The "text" set has those
-two views of the title + blurb; "text+metadata" adds three views of the record's other fields,
-which every participant had at test time (the publisher URL was withheld and is not used): the
-title on its own, the author names as tokens, and ISBN publisher prefixes, which identify the
-imprint. Authors and imprints are strong genre predictors, and the task report notes several
-teams used such metadata. Local classifiers use the "inclusive" training strategy by default
-(every out-of-subtree blurb is a negative at every node); --training-strategy siblings trains
-each node on its own subtree only.
+two views of the title + blurb; "text+metadata" adds three more views, built from fields every
+participant had at test time (the publisher URL was withheld and is not used): the title on its
+own, the author names as tokens, and ISBN publisher prefixes, which identify the imprint. Authors
+and imprints are strong genre predictors, and the task report notes several teams used such
+metadata. Every view is L2-normalised and the views are concatenated with equal weight (scaling
+the metadata views by 0.5-1.4 was measured on dev; 1.0 is best). Local classifiers use the
+"inclusive" training strategy by default (every out-of-subtree blurb is a negative at every node);
+--training-strategy siblings trains each node on its own subtree only.
 
 Protocol: the configuration (feature set, decision threshold, root fallback) is chosen on the
 development split with models fitted on the training split only; the model is then refitted on
 train + dev and the test set is scored once for the default configuration (text features,
-threshold 0) and once for the dev-selected one. Per-class thresholds are not tuned here: most of
-the 343 labels have too few development positives for that (they hurt on dev in 2-fold
-cross-tuning), so one global threshold is selected.
+threshold 0) and once per feature set for the configuration selected on dev for it. Per-class
+thresholds are not tuned here: most of the 343 labels have too few development positives for that
+(they hurt on dev in 2-fold cross-tuning), so one global threshold is selected.
 
 The official data package (CC BY-NC 4.0, University of Hamburg Language Technology group) is
 downloaded on first use into ~/scikit_learn_data/germeval2019.
@@ -77,7 +78,7 @@ def fetch(name, cache_dir):
 
 
 def parse_books(text):
-    """Return (books, label sets): each book a dict of its text fields; label sets are empty for test books."""
+    """Return (books, label sets): each book a dict of its text fields. All three gold splits carry labels."""
     books, labels = [], []
     for book in BOOK.findall(text):
         books.append({name: (pattern.search(book) or [None, ""])[1].strip() for name, pattern in FIELD.items()})
@@ -97,7 +98,7 @@ def field(fn):
     return FunctionTransformer(lambda records: [fn(record) for record in records])
 
 
-def text(record):
+def record_text(record):
     return f"{record['title']} {record['body']}"
 
 
@@ -125,8 +126,10 @@ def tokens(fn):
 
 
 VIEWS = {
-    "word": lambda: make_pipeline(field(text), tfidf(ngram_range=(1, 2), max_features=70_000)),
-    "char": lambda: make_pipeline(field(text), tfidf(analyzer="char_wb", ngram_range=(2, 3), max_features=70_000)),
+    "word": lambda: make_pipeline(field(record_text), tfidf(ngram_range=(1, 2), max_features=70_000)),
+    "char": lambda: make_pipeline(
+        field(record_text), tfidf(analyzer="char_wb", ngram_range=(2, 3), max_features=70_000)
+    ),
     "title": lambda: make_pipeline(field(title), tfidf(ngram_range=(1, 2))),
     "authors": lambda: tokens(author_tokens),
     "isbn": lambda: tokens(isbn_prefix_tokens),
@@ -189,7 +192,7 @@ def main():
     # --- choose feature set, threshold and root fallback on dev (models fitted on train only), using every
     #     node's score (threshold -inf visits all nodes) and emulating the walk (`thresholds.route`) per candidate
     grid = np.round(np.arange(-0.5, 0.21, 0.05), 2)
-    dev_f1 = {}
+    dev_f1, best = {}, {}
     for features in FEATURE_SETS:
         F_train, F_dev = vectorize(features, X_train, X_dev)
         start = time.perf_counter()
@@ -200,14 +203,18 @@ def main():
         for min_root in (0, 1):
             for t in grid:
                 dev_f1[(features, t, min_root)] = micro_f1(Y_dev, route(scores_dev, t, graph, nodes, min_root=min_root))
-        best = max((k for k in dev_f1 if k[0] == features), key=dev_f1.get)
-        print(f"  best on dev: threshold {best[1]:+.2f}, min_root {best[2]}: subtask-B micro-F1 {dev_f1[best]:.4f}")
+        best[features] = max((k for k in dev_f1 if k[0] == features), key=dev_f1.get)
+        _, t, min_root = best[features]
+        f1 = dev_f1[best[features]]
+        print(f"  best on dev: threshold {t:+.2f}, min_root {min_root}: subtask-B micro-F1 {f1:.4f}")
     chosen = max(dev_f1, key=dev_f1.get)
     print(f"chosen: {chosen[0]} features, threshold {chosen[1]:+.2f}, min_root {chosen[2]} (dev {dev_f1[chosen]:.4f})")
 
-    # --- refit on train + dev, score the test set once per pre-registered configuration
+    # --- refit on train + dev, score the test set once per pre-registered configuration: the default and,
+    #     for each feature set, the configuration selected on dev for it (the overall winner among them)
     X_all, Y_all = X_train + X_dev, np.vstack([Y_train, Y_dev])
-    configurations = {"default (text, threshold 0)": ("text", 0.0, 0), "dev-selected": chosen}
+    configurations = {"default (text, threshold 0)": ("text", 0.0, 0)}
+    configurations.update({f"dev-selected ({features})": best[features] for features in FEATURE_SETS})
     matrices = {features: vectorize(features, X_all, X_test) for features in {f for f, _, _ in configurations.values()}}
     for name, (features, threshold, min_root) in configurations.items():
         F_all, F_test = matrices[features]
