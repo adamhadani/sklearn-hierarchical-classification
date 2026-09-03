@@ -180,10 +180,10 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         but can be overridden by user in some cases, e.g if the original taxonomy is already rooted and there"s no need
         for injecting an artifical root node.
 
-    progress_wrapper : progress generator or None
-        If value is set, will attempt to use the given generator to display progress updates. This added functionality
-        is especially useful within interactive environments (e.g in a testing harness or a Jupyter notebook). Setting
-        this value will also enable verbose logging. Common values in tqdm are `tqdm_notebook` or `tqdm`
+    progress_wrapper : callable or None
+        A `tqdm`-style callable, invoked as `progress_wrapper(total=..., desc=...)`, wrapping the training loop to
+        display progress updates, which is useful in interactive environments such as a Jupyter notebook. Common
+        values are `tqdm.tqdm` and `tqdm.notebook.tqdm`.
 
     feature_extraction : "preprocessed", "raw"
         Determines the feature extraction policy the classifier uses.

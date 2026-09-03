@@ -1,1 +1,37 @@
-theme: jekyll-theme-cayman
+# Jekyll configuration for the GitHub Pages site (built from this directory by
+# .github/workflows/publish-docs.yml; preview locally with `bundle exec jekyll serve`).
+title: sklearn-hierarchical-classification
+description: "Hierarchical classification for scikit-learn: local classifiers over a class tree or DAG, top-down prediction, multi-label thresholds and hierarchical metrics."
+url: https://adamhadani.github.io
+baseurl: /sklearn-hierarchical-classification
+
+remote_theme: just-the-docs/just-the-docs
+plugins:
+  - jekyll-remote-theme
+
+search_enabled: true
+heading_anchors: true
+color_scheme: light
+
+aux_links:
+  GitHub: https://github.com/adamhadani/sklearn-hierarchical-classification
+  PyPI: https://pypi.org/project/sklearn-hierarchical-classification/
+aux_links_new_tab: true
+
+mermaid:
+  version: "10.9.1"
+
+callouts:
+  note:
+    title: Note
+    color: blue
+  warning:
+    title: Warning
+    color: yellow
+
+footer_content: 'Apache License 2.0. Originally developed at Globality; maintained by Adam Ever-Hadani.'
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - vendor

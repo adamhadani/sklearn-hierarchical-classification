@@ -40,7 +40,7 @@ dynamic = ["version"]
 
 [project.urls]
 Homepage = "https://github.com/adamhadani/sklearn-hierarchical-classification"
-Documentation = "http://code.globality.com/sklearn-hierarchical-classification/"
+Documentation = "https://adamhadani.github.io/sklearn-hierarchical-classification/"
 Issues = "https://github.com/adamhadani/sklearn-hierarchical-classification/issues"
 
 [dependency-groups]
@@ -120,9 +120,6 @@ extend-select = [
     "T",  # flake8-debugger
     "UP",  # pyupgrade
 ]
-
-[tool.ruff.lint.per-file-ignores]
-"docs/source/conf.py" = ["A001"]  # `copyright` is a Sphinx config name
 
 [tool.ruff.lint.mccabe]
 max-complexity = 15

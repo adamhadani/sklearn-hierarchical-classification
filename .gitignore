@@ -88,15 +88,8 @@ coverage.xml
 # Django stuff:
 *.log
 
-# Sphinx documentation
-docs/_build/
-docs/source/generated
-
 # PyBuilder
 target/
-
-# gh-pages
-public
 
 # uv / pyenv
 .python-version
@@ -104,3 +97,10 @@ public
 
 # direnv
 .envrc
+
+# Jekyll docs site (local preview)
+docs/_site/
+docs/.jekyll-cache/
+docs/vendor/
+docs/Gemfile.lock
+docs/.bundle/
