@@ -129,11 +129,12 @@ publisher configured for this repo and a `pypi` GitHub environment.
 single source of truth for what is enforced. Upgrade with `uv lock --upgrade`; new checks
 go in the pre-commit config, never as bare workflow steps. Two CI jobs test claims made in
 `pyproject.toml` rather than code: `test (3.11, lowest)` installs with
-`--resolution lowest-direct`, so a dependency lower bound is only as high as the oldest release
-the suite passes on (raise it when relying on a newer API); `package` installs the built wheel
-alone into an empty environment and checks it imports, fits, contains `py.typed` and not the
-tests. Coverage `fail_under = 95` applies to every `pytest --cov` run, including the pre-commit
-hook that skips the slow test.
+`UV_RESOLUTION=lowest-direct` (job-wide: a resolution mode given to `uv sync` alone is undone by
+the next `uv run`, which re-locks), so a declared lower bound is never lower than a release the
+suite actually passes on (raise it when relying on a newer API); `package` installs the built
+wheel without the dev dependencies and checks it imports, fits and does not contain the tests.
+Coverage `fail_under = 95` (statements and branches together) applies to every `pytest --cov`
+run, including the pre-commit hook that skips the slow test; the margin is under a point.
 
 **Ruff rule selection uses `extend-select`, not `select`**, layering on top of ruff's
 default rule set. All tool config lives in `pyproject.toml`; do not reintroduce

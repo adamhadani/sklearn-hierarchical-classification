@@ -42,6 +42,10 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # Job-wide, so that `uv run` in the test step keeps the resolution `uv sync` installed
+    # (a resolution mode passed to one command only is undone by the next one, which re-locks)
+    env:
+      UV_RESOLUTION: ${{ matrix.resolution }}
     strategy:
       fail-fast: false
       matrix:
@@ -63,7 +67,7 @@ jobs:
         version: "latest"
         enable-cache: true
     - name: Install the project
-      run: uv sync --dev --resolution ${{ matrix.resolution }}
+      run: uv sync --dev
     - name: Cache scikit-learn datasets
       uses: actions/cache@v5
       with:
@@ -84,12 +88,13 @@ jobs:
       with:
         python-version: "3.13"
         version: "latest"
+        enable-cache: true
     - name: Build the distributions
       run: uv build
     - name: Check the distributions
-      run: uvx twine check dist/*
-    # The wheel alone, in a fresh environment: it imports and fits without the dev
-    # dependencies, ships its type marker, and leaves the test subpackage out
+      run: uvx twine check --strict dist/*
+    # The wheel in a fresh environment, without the dev dependencies: it imports and fits,
+    # and leaves the test subpackage out
     - name: Smoke-test the wheel
       run: |
         uv venv smoke
@@ -103,7 +108,6 @@ jobs:
 
         root = Path(package.__file__).parent
         assert "site-packages" in root.parts, f"imported from {root}, not from the wheel"
-        assert (root / "py.typed").is_file(), "py.typed is missing from the wheel"
         assert importlib.util.find_spec("sklearn_hierarchical_classification.tests") is None, "tests are in the wheel"
 
         X, y = [[0.0], [1.0], [0.0], [1.0]], ["a", "b", "a", "b"]

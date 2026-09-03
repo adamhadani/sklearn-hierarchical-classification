@@ -64,11 +64,6 @@ include-package-data = false
 include = ["sklearn_hierarchical_classification*"]
 exclude = ["sklearn_hierarchical_classification.tests*"]
 
-[tool.setuptools.package-data]
-# PEP 561 marker: lets type checkers use the package's annotations (`include-package-data`
-# is off above, so it has to be listed explicitly)
-sklearn_hierarchical_classification = ["py.typed"]
-
 [tool.setuptools_scm]
 # Version is derived from git tags (e.g. `1.4.0`); presence of this table enables setuptools-scm.
 
@@ -96,12 +91,14 @@ omit = ["sklearn_hierarchical_classification/tests/*"]
 
 [tool.coverage.report]
 show_missing = true
-# Fails `pytest --cov` (the pre-commit hook and CI) below this line coverage; the suite sits a
-# point or two above it, so a change that leaves new code untested fails before review
+# Fails `pytest --cov` (the pre-commit hook and CI) below this total (statement + branch)
+# coverage. The suite sits under a point above it, so a change that leaves new code
+# untested fails before review
 fail_under = 95
 
 [tool.codespell]
-skip = "./.git,./.venv,uv.lock,*.egg-info,./docs/_site,./docs/vendor"
+# Nb. no "./" prefixes: those never match the paths pre-commit hands to the hook
+skip = ".git,.venv,uv.lock,*.egg-info,_site,vendor"
 # "ist" appears in citeseerx.ist.psu.edu URLs
 ignore-words-list = "ist"
 

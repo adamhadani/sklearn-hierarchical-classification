@@ -47,7 +47,6 @@ repos:
     entry: uv run codespell
     language: system
     types: [text]
-    exclude: ^uv\.lock$
   - id: mypy
     name: mypy
     entry: bash -ec "uv run mypy sklearn_hierarchical_classification"
