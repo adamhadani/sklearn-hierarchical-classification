@@ -107,14 +107,29 @@ documents, TF-IDF features from scikit-learn), `LinearSVC` local classifiers:
 **GermEval 2019 Task 1** (German book blurbs, 343 genres in a 4-level tree), test set, with the
 feature set, threshold and root fallback chosen on the development split:
 
-| Configuration | subtask B micro-F1 | subtask A micro-F1 |
+| Configuration | micro-F1 | macro-F1 | root genres micro-F1 |
+|---|---:|---:|---:|
+| Title + blurb TF-IDF, dev-selected threshold and root fallback | 0.651 | 0.282 | 0.807 |
+| Plus metadata views (title, author tokens, ISBN publisher prefixes) | **0.725** | **0.373** | **0.872** |
+| Published winning system (built on this library, per-node vocabularies) | 0.677 | | 0.863 |
+
+**Blurb Genre Collection** (English book blurbs from the same group, 146 genres in a 4-level
+hierarchy, 58,715 / 14,785 / 18,394 train / dev / test), one of the four standard datasets of
+the hierarchical text classification literature, same protocol. The neural rows use the blurb text
+only, so the text-only row is the like-for-like comparison; the metadata row shows what the
+dataset's own fields add. Classifier fit takes 3.5 minutes on a laptop core against hours on a GPU:
+
+| Configuration | micro-F1 | macro-F1 |
 |---|---:|---:|
-| Title + blurb TF-IDF, dev-selected threshold and root fallback | 0.651 | 0.807 |
-| Plus metadata views (title, author tokens, ISBN publisher prefixes) | **0.725** | **0.872** |
-| Published winning system (built on this library, per-node vocabularies) | 0.677 | 0.863 |
+| Title + blurb TF-IDF, dev-selected threshold and root fallback | 0.768 | 0.552 |
+| Plus metadata views (title, author tokens, ISBN publisher prefixes) | 0.818 | 0.622 |
+| SVM baseline of the dataset paper (Aly et al. 2019) | 0.712 | |
+| Fine-tuned BERT-base, flat (Karl and Scherp 2025) | 0.814 | 0.646 |
+| HYDRA, RoBERTa-base with per-level heads (EMNLP 2025) | **0.822** | **0.662** |
 
     uv run python benchmarks/rcv1_benchmark.py --tune --C 0.5
     uv run python benchmarks/germeval2019_benchmark.py
+    uv run python benchmarks/bgc_benchmark.py
 
 
 ## Development
