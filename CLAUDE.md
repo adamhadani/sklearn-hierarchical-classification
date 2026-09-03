@@ -120,8 +120,11 @@ go in the pre-commit config, never as bare workflow steps.
 default rule set. All tool config lives in `pyproject.toml`; do not reintroduce
 `setup.cfg`, `tox.ini`, `.flake8` or similar.
 
-**`docs/` is a legacy Sphinx setup** published manually from the `gh-pages` branch. It is
-not built in CI and its `conf.py` is only linted (with `A001` ignored for `copyright`).
+**`docs/` is a Jekyll site** (just-the-docs remote theme) built and deployed to GitHub Pages by
+`publish-docs.yml` on pushes to `develop` that touch it; the repository's Pages source must be
+set to "GitHub Actions" once. Pages are hand-written Markdown, so the API reference and the
+parameter tables in `docs/` are not generated: a signature or behaviour change in the package
+must be mirrored there (and in the README's benchmark summary when numbers change).
 
 ## Commands
 
