@@ -1,4 +1,5 @@
-# Lint (via pre-commit) and test across supported Python versions.
+# Lint (via pre-commit), test across supported Python versions and dependency bounds, and
+# smoke-test the built wheel.
 
 name: CI
 
@@ -30,7 +31,7 @@ jobs:
       with:
         path: ~/.cache/pre-commit
         key: pre-commit-${{ hashFiles('.pre-commit-config.yaml') }}
-    # Runs the full .pre-commit-config.yaml (ruff, mypy and the hygiene hooks)
+    # Runs the full .pre-commit-config.yaml (ruff, codespell, mypy and the hygiene hooks)
     # so CI enforces exactly what pre-commit does locally and a
     # `git commit --no-verify` cannot slip past it. pytest is skipped here
     # because the test matrix below covers it across every Python version.
@@ -41,12 +42,22 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
+    # Job-wide, so that `uv run` in the test step keeps the resolution `uv sync` installed
+    # (a resolution mode passed to one command only is undone by the next one, which re-locks)
+    env:
+      UV_RESOLUTION: ${{ matrix.resolution }}
     strategy:
       fail-fast: false
       matrix:
         python-version: ["3.11", "3.12", "3.13", "3.14"]
+        resolution: ["highest"]
+        include:
+          # The oldest releases the dependency lower bounds in pyproject.toml admit, so a
+          # bound that is too low fails here rather than for a user with an old install
+          - python-version: "3.11"
+            resolution: "lowest-direct"
 
-    name: test (${{ matrix.python-version }})
+    name: test (${{ matrix.python-version }}${{ matrix.resolution == 'lowest-direct' && ', lowest' || '' }})
     steps:
     - uses: actions/checkout@v7
     - name: Install uv and set the python version
@@ -64,3 +75,42 @@ jobs:
         key: scikit-learn-data-20newsgroups
     - name: Run tests
       run: uv run pytest --cov --cov-branch --cov-report=term-missing
+
+  package:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v7
+      with:
+        fetch-depth: 0  # setuptools-scm derives the version from the tag history
+    - name: Install uv
+      uses: astral-sh/setup-uv@v10.0.1
+      with:
+        python-version: "3.13"
+        version: "latest"
+        enable-cache: true
+    - name: Build the distributions
+      run: uv build
+    - name: Check the distributions
+      run: uvx twine check --strict dist/*
+    # The wheel in a fresh environment, without the dev dependencies: it imports and fits,
+    # and leaves the test subpackage out
+    - name: Smoke-test the wheel
+      run: |
+        uv venv smoke
+        uv pip install --python smoke dist/*.whl
+        smoke/bin/python -I - <<'PY'
+        import importlib.util
+        from pathlib import Path
+
+        import sklearn_hierarchical_classification as package
+        from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
+
+        root = Path(package.__file__).parent
+        assert "site-packages" in root.parts, f"imported from {root}, not from the wheel"
+        assert importlib.util.find_spec("sklearn_hierarchical_classification.tests") is None, "tests are in the wheel"
+
+        X, y = [[0.0], [1.0], [0.0], [1.0]], ["a", "b", "a", "b"]
+        assert list(HierarchicalClassifier().fit(X, y).predict(X)) == y
+        print("wheel OK:", root)
+        PY

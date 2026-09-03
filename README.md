@@ -140,7 +140,7 @@ The project is managed with [uv](https://docs.astral.sh/uv/); all tooling config
     uv sync --dev                       # create .venv and install the package + dev tools
     uv run pre-commit install           # run the hooks on every commit
     uv run pytest -m "not slow"         # what the pre-commit hook runs
-    uv run pre-commit run --all-files   # everything CI enforces: ruff, mypy, hygiene hooks, tests
+    uv run pre-commit run --all-files   # everything CI enforces: ruff, codespell, mypy, hygiene hooks, tests
 
 Versions come from git tags (setuptools-scm); pushing a tag `X.Y.Z` publishes to PyPI and
 creates a GitHub Release. The documentation site is built by Jekyll from `docs/` and published

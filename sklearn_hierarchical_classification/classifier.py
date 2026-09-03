@@ -180,7 +180,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         assumes that the given class hierarchy graph is a rooted DAG, e.g has a single designated root node
         of in-degree 0. This node is associated with a special identifier which defaults to a framework provided one,
         but can be overridden by user in some cases, e.g if the original taxonomy is already rooted and there"s no need
-        for injecting an artifical root node.
+        for injecting an artificial root node.
 
     progress_wrapper : callable or None
         A `tqdm`-style callable, invoked as `progress_wrapper(total=..., desc=...)`, wrapping the training loop to

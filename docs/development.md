@@ -25,19 +25,24 @@ uv run pre-commit install
 ```bash
 uv run pytest -m "not slow"         # what the pre-commit hook runs
 uv run pytest --cov --cov-branch    # full suite, as CI runs it
-uv run pre-commit run --all-files   # everything CI enforces: ruff, mypy, hygiene hooks, tests
+uv run pre-commit run --all-files   # everything CI enforces: ruff, codespell, mypy, hygiene hooks, tests
 ```
 
 Tests live inside the package, under `sklearn_hierarchical_classification/tests/`, and are
 excluded from the wheel. `pytest.mark.slow` marks the tests that download a dataset. Deprecation
 warnings fail the suite, so a deprecated scikit-learn, numpy or networkx call is caught before
-the API disappears.
+the API disappears, and total (statement and branch) coverage below 95% fails every
+`pytest --cov` run. `codespell` checks the tracked text files as one of the pre-commit hooks.
 
 ## Pull requests
 
 The `develop` branch is the integration branch (git-flow); open pull requests against it.
-CI lints with the pre-commit configuration and runs the test suite on Python 3.11 through
-3.14. Add a test for every behaviour change.
+CI lints with the pre-commit configuration, runs the test suite on Python 3.11 through 3.14
+and once more on 3.11 against the oldest releases the dependency lower bounds in
+`pyproject.toml` admit, and builds the wheel and installs it into an environment without the
+dev dependencies to check that it imports, fits and leaves the tests out. Add a test for every
+behaviour change. Dependabot opens weekly pull requests for the GitHub Actions and for the
+packages in `uv.lock`, minor and patch bumps grouped, majors one at a time.
 
 ## Benchmarks
 

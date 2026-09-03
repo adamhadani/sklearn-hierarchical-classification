@@ -45,6 +45,7 @@ Issues = "https://github.com/promptromp/sklearn-hierarchical-classification/issu
 
 [dependency-groups]
 dev = [
+    "codespell>=2.4",
     "inflect>=7.0",
     "mypy>=1.15",
     "pre-commit>=4.0",
@@ -90,6 +91,16 @@ omit = ["sklearn_hierarchical_classification/tests/*"]
 
 [tool.coverage.report]
 show_missing = true
+# Fails `pytest --cov` (the pre-commit hook and CI) below this total (statement + branch)
+# coverage. The suite sits under a point above it, so a change that leaves new code
+# untested fails before review
+fail_under = 95
+
+[tool.codespell]
+# Nb. no "./" prefixes: those never match the paths pre-commit hands to the hook
+skip = ".git,.venv,uv.lock,*.egg-info,_site,vendor"
+# "ist" appears in citeseerx.ist.psu.edu URLs
+ignore-words-list = "ist"
 
 [tool.mypy]
 namespace_packages = true

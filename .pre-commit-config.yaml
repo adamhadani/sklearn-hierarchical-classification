@@ -26,7 +26,7 @@ repos:
     - id: uv-lock
 - repo: local
   hooks:
-  # Ruff, mypy and pytest all run out of the dev dependency group resolved in
+  # Ruff, codespell, mypy and pytest all run out of the dev dependency group resolved in
   # uv.lock. CI runs the same `uv run ...` commands via pre-commit, so the
   # versions enforced locally and in CI cannot drift apart. Bump them with
   # `uv lock --upgrade` -- there is no separate hook rev to update.
@@ -42,6 +42,11 @@ repos:
     language: system
     types_or: [python, pyi]
     require_serial: true
+  - id: codespell
+    name: codespell
+    entry: uv run codespell
+    language: system
+    types: [text]
   - id: mypy
     name: mypy
     entry: bash -ec "uv run mypy sklearn_hierarchical_classification"
