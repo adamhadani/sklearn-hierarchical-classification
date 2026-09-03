@@ -1,10 +1,10 @@
 # sklearn-hierarchical-classification
 
-[![CI](https://github.com/adamhadani/sklearn-hierarchical-classification/actions/workflows/ci.yml/badge.svg)](https://github.com/adamhadani/sklearn-hierarchical-classification/actions/workflows/ci.yml)
-[![Docs](https://github.com/adamhadani/sklearn-hierarchical-classification/actions/workflows/publish-docs.yml/badge.svg)](https://adamhadani.github.io/sklearn-hierarchical-classification/)
+[![CI](https://github.com/promptromp/sklearn-hierarchical-classification/actions/workflows/ci.yml/badge.svg)](https://github.com/promptromp/sklearn-hierarchical-classification/actions/workflows/ci.yml)
+[![Docs](https://github.com/promptromp/sklearn-hierarchical-classification/actions/workflows/publish-docs.yml/badge.svg)](https://promptromp.github.io/sklearn-hierarchical-classification/)
 [![PyPI - Version](https://img.shields.io/pypi/v/sklearn-hierarchical-classification)](https://pypi.org/project/sklearn-hierarchical-classification/)
 [![PyPI - Python Version](https://img.shields.io/pypi/pyversions/sklearn-hierarchical-classification)](https://pypi.org/project/sklearn-hierarchical-classification/)
-[![License](https://img.shields.io/github/license/adamhadani/sklearn-hierarchical-classification)](./LICENSE)
+[![License](https://img.shields.io/github/license/promptromp/sklearn-hierarchical-classification)](./LICENSE)
 
 Hierarchical classification for [scikit-learn](https://scikit-learn.org/).
 
@@ -17,7 +17,7 @@ text), early stopping at intermediate nodes, and multi-label targets through a
 lets a node reject what its parent mis-routes to it, and a `thresholds` module that tunes
 thresholds from held-out scores. Hierarchical precision, recall and F-beta are in `metrics`.
 
-**Documentation:** <https://adamhadani.github.io/sklearn-hierarchical-classification/>
+**Documentation:** <https://promptromp.github.io/sklearn-hierarchical-classification/>
 
 
 ## Installation
@@ -74,7 +74,7 @@ clf = HierarchicalClassifier(
 )
 ```
 
-The [documentation](https://adamhadani.github.io/sklearn-hierarchical-classification/) covers
+The [documentation](https://promptromp.github.io/sklearn-hierarchical-classification/) covers
 hierarchies and base estimators, raw-text pipelines, early stopping, multi-label prediction and
 threshold tuning, the hierarchical metrics, and the API. `examples/classify_digits.py` is a
 complete example including the metrics (it runs from a source checkout, as it uses the test fixtures).
@@ -84,7 +84,7 @@ complete example including the metrics (it runs from a source checkout, as it us
 
 Both scripts in `benchmarks/` choose every tuned setting on out-of-fold or development data and
 score the test set once. Full tables and protocol are on the
-[Benchmarks](https://adamhadani.github.io/sklearn-hierarchical-classification/benchmarks) page.
+[Benchmarks](https://promptromp.github.io/sklearn-hierarchical-classification/benchmarks) page.
 
 **RCV1-v2** (Lewis et al. 2004: 103 topics, 23,149 training and 781,265 test newswire
 documents, TF-IDF features from scikit-learn), `LinearSVC` local classifiers:
@@ -122,16 +122,17 @@ The project is managed with [uv](https://docs.astral.sh/uv/); all tooling config
 Versions come from git tags (setuptools-scm); pushing a tag `X.Y.Z` publishes to PyPI and
 creates a GitHub Release. The documentation site is built by Jekyll from `docs/` and published
 to GitHub Pages on every push to `develop` that touches it. See [CONTRIBUTING.md](./CONTRIBUTING.md) and the
-[Development](https://adamhadani.github.io/sklearn-hierarchical-classification/development) page.
+[Development](https://promptromp.github.io/sklearn-hierarchical-classification/development) page.
 
 Upgrading from the 1.3.x releases? Read the
-[upgrade notes](https://adamhadani.github.io/sklearn-hierarchical-classification/upgrading).
+[upgrade notes](https://promptromp.github.io/sklearn-hierarchical-classification/upgrading).
 
 
 ## Credits
 
 Created by Globality Engineering and released under the Apache License 2.0; the original
-repository is archived and this is its continued development.
+repository is archived and this is its continued development, maintained under the
+[PromptRomp](https://github.com/promptromp) organization.
 
 The design follows the framework of
 ["A survey of hierarchical classification across different application domains"](https://www.researchgate.net/publication/225716424_A_survey_of_hierarchical_classification_across_different_application_domains)
