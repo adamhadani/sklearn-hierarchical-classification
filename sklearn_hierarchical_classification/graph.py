@@ -10,7 +10,7 @@ from networkx import descendants
 
 
 def make_flat_hierarchy(targets, root):
-    """Create a trivial (flat) hiearchy, linking all given targets to given root node."""
+    """Create a trivial (flat) hierarchy, linking all given targets to given root node."""
     adjacency = defaultdict(list)
     for target in targets:
         adjacency[root].append(target)

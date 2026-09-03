@@ -123,11 +123,17 @@ plain `X.Y.Z` (no `v` prefix), matching the existing tag history, and only tags 
 exact shape trigger the publish jobs in `publish-to-pypi.yml`, which needs a PyPI trusted
 publisher configured for this repo and a `pypi` GitHub environment.
 
-**Tooling versions come from `uv.lock` only.** Ruff/mypy/pytest run in pre-commit as
+**Tooling versions come from `uv.lock` only.** Ruff/codespell/mypy/pytest run in pre-commit as
 `local`/`system` hooks invoking `uv run ...`, and CI's lint job runs
 `uv run pre-commit run --all-files` with `SKIP=pytest`. `.pre-commit-config.yaml` is the
 single source of truth for what is enforced. Upgrade with `uv lock --upgrade`; new checks
-go in the pre-commit config, never as bare workflow steps.
+go in the pre-commit config, never as bare workflow steps. Two CI jobs test claims made in
+`pyproject.toml` rather than code: `test (3.11, lowest)` installs with
+`--resolution lowest-direct`, so a dependency lower bound is only as high as the oldest release
+the suite passes on (raise it when relying on a newer API); `package` installs the built wheel
+alone into an empty environment and checks it imports, fits, contains `py.typed` and not the
+tests. Coverage `fail_under = 95` applies to every `pytest --cov` run, including the pre-commit
+hook that skips the slow test.
 
 **Ruff rule selection uses `extend-select`, not `select`**, layering on top of ruff's
 default rule set. All tool config lives in `pyproject.toml`; do not reintroduce

@@ -54,7 +54,7 @@ RANDOM_STATE = 42
 
 
 def test_estimator_inteface():
-    """Run the scikit-learn estimator compatability test suite."""
+    """Run the scikit-learn estimator compatibility test suite."""
     check_estimator(HierarchicalClassifier())
 
 
