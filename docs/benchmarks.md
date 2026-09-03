@@ -63,13 +63,13 @@ not used). Local classifiers are inclusive-trained `LinearSVC`s with C=1.5. The 
 decision threshold and root fallback are selected on the development split; the model is then
 refitted on train + dev and the test set scored once per configuration.
 
-| Configuration | subtask B micro-F1 | subtask A micro-F1 |
-|---|---:|---:|
-| `text`, threshold 0, no root fallback | 0.590 | 0.819 |
-| `text`, dev-selected threshold -0.40, root fallback, siblings-trained nodes | 0.634 | |
-| `text`, dev-selected threshold -0.40, root fallback | 0.651 | 0.807 |
-| `text+metadata`, dev-selected threshold -0.35, root fallback | **0.725** | **0.872** |
-| Published TwistBytes system (per-node vocabularies, three views) | 0.677 | 0.863 (flat model) |
+| Configuration | micro-F1 (subtask B) | macro-F1 | root genres micro-F1 (subtask A) |
+|---|---:|---:|---:|
+| `text`, threshold 0, no root fallback | 0.590 | 0.161 | 0.819 |
+| `text`, dev-selected threshold -0.40, root fallback, siblings-trained nodes | 0.634 | | |
+| `text`, dev-selected threshold -0.40, root fallback | 0.651 | 0.282 | 0.807 |
+| `text+metadata`, dev-selected threshold -0.35, root fallback | **0.725** | **0.373** | **0.872** |
+| Published TwistBytes system (per-node vocabularies, three views) | 0.677 | | 0.863 (flat model) |
 
 Authors and imprints are the lever: on the development split the author view alone adds five
 points and the ISBN view three, while the title view, the publication year, wider character
@@ -77,6 +77,40 @@ n-grams and the winning system's word 1-7 gram views each move the score by less
 point. Per-class thresholds are not used here: most of the 343 labels have too few development
 positives, and in 2-fold cross-tuning within the development split every per-class scheme loses
 to one scalar threshold.
+
+## Blurb Genre Collection
+
+The English counterpart of the GermEval data, from the same group (Aly, Remus and Biemann 2019):
+91,892 Penguin Random House blurbs, 146 genres in a 4-level hierarchy with 7 root genres, split
+58,715 / 14,785 / 18,394 into train / dev / test, about three labels per blurb. It is one of the
+four standard datasets of the hierarchical text classification literature (with RCV1-v2, NYT and
+Web of Science), so current neural results are directly comparable. The script shares its
+features, classifier and protocol with the GermEval one (`benchmarks/blurbs.py`); six hierarchy
+leaves that never occur as labels are dropped so that the label space is the papers' 146.
+
+```bash
+uv run python benchmarks/bgc_benchmark.py
+```
+
+| Configuration | micro-F1 | macro-F1 | root genres micro-F1 |
+|---|---:|---:|---:|
+| `text`, threshold 0, no root fallback | 0.744 | 0.469 | 0.905 |
+| `text`, dev-selected threshold -0.25, root fallback | 0.768 | 0.552 | 0.904 |
+| `text+metadata`, dev-selected threshold -0.20, root fallback | **0.818** | 0.622 | **0.940** |
+| SVM baseline of the dataset paper (Aly et al. 2019) | 0.712 | | |
+| Fine-tuned BERT-base, flat (Karl and Scherp 2025) | 0.814 | 0.646 | |
+| Fine-tuned RoBERTa-base, flat (Karl and Scherp 2025) | 0.815 | 0.641 | |
+| HYDRA, RoBERTa-base with per-level heads (EMNLP 2025) | 0.822 | **0.662** | |
+
+Two readings, kept apart on purpose. On the blurb text alone, which is what the neural systems
+see, the linear local classifiers trail a fine-tuned encoder by about five points of micro-F1
+and nine of macro-F1: that gap is the representation, and the hierarchy machinery cannot close
+it. With the metadata the dataset ships (author names, ISBN imprint prefixes), the same linear
+model matches BERT-base micro-F1 and sits half a point under the best published system, after
+3.5 minutes of classifier training on one laptop core against hours on a GPU. Macro-F1 stays
+below the encoders in both readings: the rare genres are where text understanding pays. The
+neural numbers are from Karl and Scherp, "HYDRA: A Multi-Head Encoder-only Architecture for
+Hierarchical Text Classification" (EMNLP 2025), Table 3.
 
 ## What did not help
 

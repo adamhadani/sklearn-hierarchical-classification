@@ -41,12 +41,13 @@ CI lints with the pre-commit configuration and runs the test suite on Python 3.1
 
 ## Benchmarks
 
-`benchmarks/` holds three scripts that are not part of the package:
+`benchmarks/` holds scripts that are not part of the package:
 
 - `bench.py` times `fit` and `predict` on synthetic sparse data and hierarchies of
   configurable shape;
 - `rcv1_benchmark.py` runs RCV1-v2 (fetched through scikit-learn);
-- `germeval2019_benchmark.py` runs GermEval 2019 Task 1 (downloaded on first use).
+- `germeval2019_benchmark.py` and `bgc_benchmark.py` run the two book-blurb datasets
+  (downloaded on first use) through the features and protocol shared in `blurbs.py`.
 
 Results and protocol are on the [Benchmarks](benchmarks) page. Keep to the protocol when
 adding a configuration: every choice is made on out-of-fold or development data and the test
