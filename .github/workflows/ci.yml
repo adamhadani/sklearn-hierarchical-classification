@@ -94,7 +94,7 @@ jobs:
     - name: Check the distributions
       run: uvx twine check --strict dist/*
     # The wheel in a fresh environment, without the dev dependencies: it imports and fits,
-    # and leaves the test subpackage out
+    # ships its type marker, and leaves the test subpackage out
     - name: Smoke-test the wheel
       run: |
         uv venv smoke
@@ -108,6 +108,7 @@ jobs:
 
         root = Path(package.__file__).parent
         assert "site-packages" in root.parts, f"imported from {root}, not from the wheel"
+        assert (root / "py.typed").is_file(), "py.typed is missing from the wheel"
         assert importlib.util.find_spec("sklearn_hierarchical_classification.tests") is None, "tests are in the wheel"
 
         X, y = [[0.0], [1.0], [0.0], [1.0]], ["a", "b", "a", "b"]

@@ -1,13 +1,24 @@
 """Decision-threshold tuning for multi-label prediction scores."""
 
+from collections.abc import Hashable, Sequence
+from typing import Any
+
 import numpy as np
-from networkx import descendants, topological_sort
+from networkx import DiGraph, descendants, topological_sort
+from numpy.typing import ArrayLike, NDArray
 
 from sklearn_hierarchical_classification.array import top_k_mask
 from sklearn_hierarchical_classification.constants import ROOT
 
 
-def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT, scored=None):
+def scut_thresholds(
+    scores: ArrayLike,
+    y: ArrayLike,
+    graph: DiGraph | None = None,
+    classes: Sequence[Hashable] | NDArray[Any] | None = None,
+    root: Hashable = ROOT,
+    scored: ArrayLike | None = None,
+) -> NDArray[np.float64]:
     """
     Per-class decision thresholds maximising F1 on held-out scores (SCut, Yang 1999).
 
@@ -52,7 +63,15 @@ def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT, scored=None)
     return np.array(thresholds)
 
 
-def routed_thresholds(scores, y, graph, classes, root=ROOT, scored=None, min_root=0):
+def routed_thresholds(
+    scores: ArrayLike,
+    y: ArrayLike,
+    graph: DiGraph,
+    classes: Sequence[Hashable] | NDArray[Any],
+    root: Hashable = ROOT,
+    scored: ArrayLike | None = None,
+    min_root: int = 0,
+) -> NDArray[np.float64]:
     """
     Per-class decision thresholds tuned sequentially, top-down, on the samples the hierarchy routes.
 
@@ -90,7 +109,15 @@ def routed_thresholds(scores, y, graph, classes, root=ROOT, scored=None, min_roo
     return thresholds
 
 
-def route(scores, thresholds, graph, classes, root=ROOT, min_root=0, scored=None):
+def route(
+    scores: ArrayLike,
+    thresholds: float | ArrayLike,
+    graph: DiGraph,
+    classes: Sequence[Hashable] | NDArray[Any],
+    root: Hashable = ROOT,
+    min_root: int = 0,
+    scored: ArrayLike | None = None,
+) -> NDArray[np.int_]:
     """
     Emulate `HierarchicalClassifier`'s multi-label walk on an all-node score matrix.
 
@@ -129,7 +156,9 @@ def route(scores, thresholds, graph, classes, root=ROOT, min_root=0, scored=None
     return _route(scores, scored, graph, classes, root, min_root, lambda j, rows: thresholds[j]).astype(int)
 
 
-def label_cardinality_threshold(scores, target_cardinality, candidates=None):
+def label_cardinality_threshold(
+    scores: ArrayLike, target_cardinality: float, candidates: ArrayLike | None = None
+) -> float:
     """
     A single decision threshold matching the average number of labels per sample (label
     cardinality adjustment, Read et al. 2009): among `candidates` (default: the distinct scores),
@@ -149,7 +178,7 @@ def label_cardinality_threshold(scores, target_cardinality, candidates=None):
     return float(thresholds[np.argmin(np.abs(predicted / n_samples - target_cardinality))])
 
 
-def best_f1_threshold(scores, y):
+def best_f1_threshold(scores: NDArray[Any], y: NDArray[Any]) -> float:
     """The threshold on `scores` maximising F1 against binary `y`; `inf` if `y` has no positives."""
     n_positive = int(np.sum(y))
     if n_positive == 0 or len(scores) == 0:
@@ -165,7 +194,9 @@ def best_f1_threshold(scores, y):
     return float(np.nextafter(ranked_scores[best], -np.inf))
 
 
-def _validated(scores, y, scored):
+def _validated(
+    scores: ArrayLike, y: ArrayLike, scored: ArrayLike | None
+) -> tuple[NDArray[np.float64], NDArray[Any], NDArray[np.bool_]]:
     scores, y = np.asarray(scores, dtype=np.float64), np.asarray(y)
     scored = np.ones(scores.shape, dtype=bool) if scored is None else np.asarray(scored, dtype=bool)
     if scores.ndim != 2 or scores.shape != y.shape or scored.shape != y.shape:

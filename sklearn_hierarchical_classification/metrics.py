@@ -3,18 +3,22 @@ Evaluation metrics for hierarchical classification.
 
 """
 
-from collections.abc import Iterable
+from collections.abc import Hashable, Iterable, Iterator
 from contextlib import contextmanager
+from typing import Any
 
 import numpy as np
-from networkx import all_pairs_shortest_path_length, relabel_nodes
+from networkx import DiGraph, all_pairs_shortest_path_length, relabel_nodes
+from numpy.typing import NDArray
 from sklearn.preprocessing import MultiLabelBinarizer
 
 from sklearn_hierarchical_classification.constants import ROOT
 
 
 @contextmanager
-def multi_labeled(y_true, y_pred, graph):
+def multi_labeled(
+    y_true: Iterable[Any], y_pred: Iterable[Any], graph: DiGraph
+) -> Iterator[tuple[NDArray[Any], NDArray[Any], DiGraph]]:
     """
     Helper context manager for using the hierarchical evaluation metrics
     defined in this model.
@@ -81,7 +85,7 @@ def _as_label_sets(y):
     return [[label] for label in y]
 
 
-def fill_ancestors(y, graph, root, copy=True):
+def fill_ancestors(y: NDArray[Any], graph: DiGraph, root: Hashable, copy: bool = True) -> NDArray[Any]:
     """
     Compute the full ancestor set for y, where y is in binary multi-label format,
     e.g. as a matrix of 0-1.
@@ -124,7 +128,9 @@ def fill_ancestors(y, graph, root, copy=True):
     return y_
 
 
-def h_precision_score(y_true, y_pred, class_hierarchy, root=ROOT):
+def h_precision_score(
+    y_true: NDArray[Any], y_pred: NDArray[Any], class_hierarchy: DiGraph, root: Hashable = ROOT
+) -> float:
     """
     Calculate the micro-averaged hierarchical precision ("hR") metric based on
     given set of true class labels and predicated class labels, and the
@@ -169,7 +175,9 @@ def h_precision_score(y_true, y_pred, class_hierarchy, root=ROOT):
     return true_positives / all_results
 
 
-def h_recall_score(y_true, y_pred, class_hierarchy, root=ROOT):
+def h_recall_score(
+    y_true: NDArray[Any], y_pred: NDArray[Any], class_hierarchy: DiGraph, root: Hashable = ROOT
+) -> float:
     """
     Calculate the micro-averaged hierarchical recall ("hR") metric based on
     given set of true class labels and predicated class labels, and the
@@ -214,7 +222,9 @@ def h_recall_score(y_true, y_pred, class_hierarchy, root=ROOT):
     return true_positives / all_positives
 
 
-def h_fbeta_score(y_true, y_pred, class_hierarchy, beta=1.0, root=ROOT):
+def h_fbeta_score(
+    y_true: NDArray[Any], y_pred: NDArray[Any], class_hierarchy: DiGraph, beta: float = 1.0, root: Hashable = ROOT
+) -> float:
     """
     Calculate the micro-averaged hierarchical F-beta ("hF_{\beta}") metric based on
     given set of true class labels and predicated class labels, and the

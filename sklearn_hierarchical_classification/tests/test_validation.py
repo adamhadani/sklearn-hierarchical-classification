@@ -1,5 +1,7 @@
 """Test validation logic."""
 
+from typing import Any
+
 import pytest
 from hamcrest import assert_that, calling, raises
 from sklearn.preprocessing import MultiLabelBinarizer
@@ -9,7 +11,7 @@ from sklearn_hierarchical_classification.tests.fixtures import make_classifier_a
 
 def test_parameter_validation():
     """Test parameter validation checks for consistent assignment."""
-    test_cases = [
+    test_cases: list[dict[str, Any]] = [
         {
             "prediction_depth": "nmlnp",
             "stopping_criteria": None,

@@ -64,6 +64,11 @@ include-package-data = false
 include = ["sklearn_hierarchical_classification*"]
 exclude = ["sklearn_hierarchical_classification.tests*"]
 
+[tool.setuptools.package-data]
+# PEP 561 marker: lets type checkers use the annotations of the public surface
+# (`include-package-data` is off above, so it has to be listed explicitly)
+sklearn_hierarchical_classification = ["py.typed"]
+
 [tool.setuptools_scm]
 # Version is derived from git tags (e.g. `1.4.0`); presence of this table enables setuptools-scm.
 
@@ -105,6 +110,8 @@ ignore-words-list = "ist"
 [tool.mypy]
 namespace_packages = true
 ignore_missing_imports = true
+# The public surface is annotated; the bodies of the unannotated internals are checked too
+check_untyped_defs = true
 
 [tool.ruff]
 line-length = 120

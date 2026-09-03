@@ -37,6 +37,10 @@ A `MetaEstimatorMixin, ClassifierMixin, BaseEstimator`. Parameters are described
 without `mlb`, or early stopping with `mlb`). `algorithm="lcn"` and the training strategies
 reserved for it are deprecated and raise a `FutureWarning` at `fit`; see [Upgrading](upgrading).
 
+The module also exports the type aliases `Features` (what `fit`/`predict` take as `X`: a dense
+or scipy sparse matrix, or any sequence of samples in `"raw"` mode) and `Targets` (labels, or a
+dense or sparse indicator matrix); the package ships a `py.typed` marker.
+
 **Methods**
 
 | | |
