@@ -19,6 +19,14 @@ thresholds from held-out scores. Hierarchical precision, recall and F-beta are i
 
 **Documentation:** <https://promptromp.github.io/sklearn-hierarchical-classification/>
 
+> **Origins.** This project was created at Globality and lived at
+> [globality-corp/sklearn-hierarchical-classification](https://github.com/globality-corp/sklearn-hierarchical-classification)
+> through release 1.3.2, after which that repository was archived. This repository is its
+> continuation under the same package name on PyPI, maintained by the original author: the
+> estimator was brought up to current scikit-learn, made faster, and extended with multi-label
+> threshold tuning and benchmarks. Coming from 1.3.x? See the
+> [upgrade notes](https://promptromp.github.io/sklearn-hierarchical-classification/upgrading).
+
 
 ## Installation
 
@@ -130,9 +138,8 @@ Upgrading from the 1.3.x releases? Read the
 
 ## Credits
 
-Created by Globality Engineering and released under the Apache License 2.0; the original
-repository is archived and this is its continued development, maintained under the
-[PromptRomp](https://github.com/promptromp) organization.
+Created by Globality Engineering and released under the Apache License 2.0 (see the Origins
+note above); maintained under the [PromptRomp](https://github.com/promptromp) organization.
 
 The design follows the framework of
 ["A survey of hierarchical classification across different application domains"](https://www.researchgate.net/publication/225716424_A_survey_of_hierarchical_classification_across_different_application_domains)
