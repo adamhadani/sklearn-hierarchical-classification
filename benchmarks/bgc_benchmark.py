@@ -2,7 +2,7 @@
 """
 Blurb Genre Collection benchmark: hierarchical classification of English book blurbs.
 
-Aly, Remus and Biemann (2019): 91,892 Penguin Random House blurbs with 146 genre labels in a
+Aly, Remus and Biemann (2019): 91,894 Penguin Random House blurbs (91,892 in the paper) with 146 genre labels in a
 4-level hierarchy (7 root genres), split 58,715 / 14,785 / 18,394 into train / dev / test, about
 3 labels per blurb. It is one of the four standard datasets of the hierarchical text
 classification literature, so current neural results are directly comparable: a flat fine-tuned

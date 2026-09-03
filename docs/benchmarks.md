@@ -9,7 +9,7 @@ nav_order: 5
 1. TOC
 {:toc}
 
-Two public multi-label text classification benchmarks with published results, run by the
+Three public multi-label text classification benchmarks with published results, run by the
 scripts in `benchmarks/`. Every tuned setting is chosen on out-of-fold scores of the training
 set or on the development split, and the test set is scored once per configuration that was
 fixed beforehand.
@@ -81,7 +81,7 @@ to one scalar threshold.
 ## Blurb Genre Collection
 
 The English counterpart of the GermEval data, from the same group (Aly, Remus and Biemann 2019):
-91,892 Penguin Random House blurbs, 146 genres in a 4-level hierarchy with 7 root genres, split
+91,894 Penguin Random House blurbs (91,892 in the paper), 146 genres in a 4-level hierarchy with 7 root genres, split
 58,715 / 14,785 / 18,394 into train / dev / test, about three labels per blurb. It is one of the
 four standard datasets of the hierarchical text classification literature (with RCV1-v2, NYT and
 Web of Science), so current neural results are directly comparable. The script shares its
@@ -96,11 +96,12 @@ uv run python benchmarks/bgc_benchmark.py
 |---|---:|---:|---:|
 | `text`, threshold 0, no root fallback | 0.744 | 0.469 | 0.905 |
 | `text`, dev-selected threshold -0.25, root fallback | 0.768 | 0.552 | 0.904 |
-| `text+metadata`, dev-selected threshold -0.20, root fallback | **0.818** | 0.622 | **0.940** |
+| `text+metadata`, dev-selected threshold -0.20, root fallback | 0.818 | 0.622 | **0.940** |
 | SVM baseline of the dataset paper (Aly et al. 2019) | 0.712 | | |
 | Fine-tuned BERT-base, flat (Karl and Scherp 2025) | 0.814 | 0.646 | |
 | Fine-tuned RoBERTa-base, flat (Karl and Scherp 2025) | 0.815 | 0.641 | |
-| HYDRA, RoBERTa-base with per-level heads (EMNLP 2025) | 0.822 | **0.662** | |
+| HYDRA, RoBERTa-base with per-level heads (EMNLP 2025) | **0.822** | 0.662 | |
+| DepthMatch (Du et al. 2024) | 0.805 | **0.666** | |
 
 Two readings, kept apart on purpose. On the blurb text alone, which is what the neural systems
 see, the linear local classifiers trail a fine-tuned encoder by about five points of micro-F1
@@ -110,7 +111,9 @@ model matches BERT-base micro-F1 and sits half a point under the best published 
 3.5 minutes of classifier training on one laptop core against hours on a GPU. Macro-F1 stays
 below the encoders in both readings: the rare genres are where text understanding pays. The
 neural numbers are from Karl and Scherp, "HYDRA: A Multi-Head Encoder-only Architecture for
-Hierarchical Text Classification" (EMNLP 2025), Table 3.
+Hierarchical Text Classification" (EMNLP 2025), Table 3, and DepthMatch from Du et al., "Leveraging
+Uncertainty for Depth-Aware Hierarchical Text Classification" (2024). Both scripts accept
+`--training-strategy siblings` to train each node on its own subtree only.
 
 ## What did not help
 
@@ -124,3 +127,6 @@ Measured and rejected, so that nobody has to repeat it:
   sibling-trained local classifiers give meaningless scores to out-of-subtree samples.
 - **Scalar thresholds chosen out-of-fold** on RCV1 do not transfer to the test period, while
   per-class thresholds do.
+- **Re-weighting the metadata views** (scaling them by 0.5 to 1.4 against the text views) on
+  GermEval: equal weights are best. **Wider character n-grams** (2-5) and the winning system's
+  **word 1-7 grams** each move GermEval by under half a point.

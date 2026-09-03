@@ -54,14 +54,16 @@ GermEval every per-class scheme loses to one scalar threshold). `thresholds.rout
 emulation of the multi-label walk on a score matrix and tests pin it to `predict` (exact on
 trees, a superset on DAGs): compare threshold policies through it, never by re-deriving the walk
 in a script. Per-node choice of base classifier family or C was measured and gives nothing on
-TF-IDF text (spike, Sept 2026): do not add a selector for it. The two blurb benchmarks share
-`benchmarks/blurbs.py` (dataset spec + dev-selection protocol); BGC is the one with published neural
-numbers (HYDRA, EMNLP 2025, Table 3) and its neural rows use blurb text only, so compare the `text` row
-to them and report the metadata row separately. `mlb_min_root_predictions` forces the
+TF-IDF text (spike, Sept 2026): do not add a selector for it. `mlb_min_root_predictions` forces the
 best-scoring root children for samples that would otherwise get no top-level label. In
 multi-label mode a node only routes to children that had a positive example in its training
 set (`graph_.nodes[n][TRAINED_CLASSES]`): one-vs-rest gives an unlearned class a constant
 predictor with decision value 0, which any negative threshold would select for every sample.
+
+**The two blurb benchmarks share `benchmarks/blurbs.py`** (dataset spec + dev-selection protocol;
+scripts import it by script-directory path, so run them as `uv run python benchmarks/<x>.py`). BGC is
+the one with published neural numbers (HYDRA, EMNLP 2025, Table 3); those rows use blurb text only, so
+compare the `text` row to them and report the metadata row separately.
 
 **`rollup_nodes` uses a descendant map, not `all_simple_paths`.** `children_by_descendant`
 maps every strict descendant of the source to the children it lies under, so each child is

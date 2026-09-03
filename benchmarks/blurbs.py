@@ -26,7 +26,7 @@ import time
 import urllib.request
 import warnings
 import zipfile
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import numpy as np
@@ -53,11 +53,11 @@ class Blurbs:
     name: str
     package_url: str
     cache_dir: Path
-    files: dict  # "train", "dev", "test", "hierarchy" -> file name inside the package
+    files: dict[str, str]  # "train", "dev", "test", "hierarchy" -> file name inside the package
     topic: re.Pattern  # matches one genre label of a record
-    tags: dict  # record field ("title", "body", "authors", "isbn") -> XML tag name
+    tags: dict[str, str]  # record field ("title", "body", "authors", "isbn") -> XML tag name
     C: float  # LinearSVC regularisation
-    published: list  # lines describing published results, printed after the test scores
+    published: list[str]  # lines describing published results, printed after the test scores
 
     def fetch(self, name):
         path = self.cache_dir / self.files[name]
@@ -82,9 +82,13 @@ def make_hierarchy(text):
     """Graph of a tab-separated parent/child file; a line with a single name is a root genre without children."""
     graph = DiGraph()
     for line in text.splitlines():
-        parts = line.rstrip("\n").split("\t")
-        if parts[0].strip():
-            graph.add_edge(*parts) if len(parts) == 2 else graph.add_node(parts[0])
+        parts = [part.strip() for part in line.split("\t") if part.strip()]
+        if len(parts) == 1:
+            graph.add_node(parts[0])
+        elif len(parts) == 2:
+            graph.add_edge(*parts)
+        elif parts:
+            raise ValueError(f"Unexpected hierarchy line: {line!r}")
     for node in [node for node, degree in graph.in_degree() if degree == 0]:
         graph.add_edge(ROOT, node)
     return graph
@@ -175,16 +179,16 @@ def parse_args(spec, description):
 
 def run(spec, args):
     warnings.filterwarnings("ignore", message="Label .* is present in all training examples", category=UserWarning)
-    spec = Blurbs(**{**spec.__dict__, "cache_dir": args.cache_dir})
+    spec = replace(spec, cache_dir=args.cache_dir)
     strategy = args.training_strategy
 
     X_train, y_train = spec.parse_books(spec.fetch("train"))
     X_dev, y_dev = spec.parse_books(spec.fetch("dev"))
     X_test, y_test = spec.parse_books(spec.fetch("test"))
     graph = make_hierarchy(spec.fetch("hierarchy"))
-    # The label space is the genres that occur in the data: hierarchy leaves that never do (BGC lists six)
-    # would only add empty columns to the F1 averages
-    used = {label for labels in y_train + y_dev + y_test for label in labels}
+    # The label space is the genres that occur in the data: hierarchy leaves that never do would only add
+    # empty columns to the F1 averages (BGC lists six, all absent from the training split alone as well)
+    used = {label for labels in y_train + y_dev for label in labels}
     graph.remove_nodes_from([node for node in graph.nodes if graph.out_degree(node) == 0 and node not in used])
     nodes = [node for node in graph.nodes if node != ROOT]
     mlb = MultiLabelBinarizer(classes=nodes).fit([nodes])
