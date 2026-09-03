@@ -3,13 +3,21 @@
 import time
 
 import numpy as np
+import pytest
 from hamcrest import assert_that, close_to, equal_to, is_
 from networkx import DiGraph
+from sklearn.linear_model import LogisticRegression
+from sklearn.multiclass import OneVsRestClassifier
+from sklearn.preprocessing import MultiLabelBinarizer
 
+from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
 from sklearn_hierarchical_classification.constants import ROOT
+from sklearn_hierarchical_classification.tests.test_classifier import make_fruit_veg_mlb_classifier
 from sklearn_hierarchical_classification.thresholds import (
     best_f1_threshold,
     label_cardinality_threshold,
+    route,
+    routed_thresholds,
     scut_thresholds,
 )
 
@@ -135,3 +143,220 @@ def test_scut_thresholds_ignore_unscored_cells():
 
     assert_that(0.2 < with_mask[0] < 0.9, is_(True))  # tuned on the three scored rows
     assert_that(without_mask[0] < 0.0, is_(True))  # the zero-scored positives drag the cut below the zeros
+
+
+def test_routed_thresholds_tune_a_child_on_the_rows_its_parent_routes_to_it():
+    r"""Sequential top-down tuning: B's threshold is tuned on the rows that pass A's threshold, which
+    includes a false positive of A that the true-population SCut never sees.
+
+            ROOT
+             |
+             A
+             |
+             B
+    """
+    graph = DiGraph([(ROOT, "A"), ("A", "B")])
+    classes = ["A", "B"]
+    scores = np.array(
+        [
+            [2.0, 3.0],  # A, B
+            [2.0, 3.0],  # A, B
+            [2.0, 1.0],  # A only
+            [2.0, 1.0],  # A only
+            [2.0, 2.5],  # nothing: A's false positive, routed on to B where it scores between B's classes
+            [-1.0, 0.0],  # nothing
+        ]
+    )
+    y = np.array([[1, 1], [1, 1], [1, 0], [1, 0], [0, 0], [0, 0]])
+
+    routed = routed_thresholds(scores, y, graph=graph, classes=classes)
+    local = scut_thresholds(scores, y, graph=graph, classes=classes)
+
+    assert_that(routed[0], is_(close_to(0.5, delta=1e-9)))  # A is tuned on every row either way
+    assert_that(local[0], is_(close_to(0.5, delta=1e-9)))
+    assert_that(local[1], is_(close_to(2.0, delta=1e-9)))  # midpoint of B's scores among true A rows
+    assert_that(routed[1], is_(close_to(2.75, delta=1e-9)))  # lifted above the routed false positive
+
+
+def test_routed_thresholds_ignore_unscored_cells():
+    graph = DiGraph([(ROOT, "A"), ("A", "B")])
+    scores = np.array([[2.0, 3.0], [2.0, 3.0], [2.0, 1.0], [2.0, 1.0], [2.0, 2.5], [-1.0, 0.0]])
+    y = np.array([[1, 1], [1, 1], [1, 0], [1, 0], [0, 0], [0, 0]])
+    scored = np.ones(scores.shape, dtype=bool)
+    scored[4, 1] = False
+
+    routed = routed_thresholds(scores, y, graph=graph, classes=["A", "B"], scored=scored)
+
+    assert_that(routed[1], is_(close_to(2.0, delta=1e-9)))
+
+
+def test_routed_thresholds_are_infinite_below_a_class_that_is_never_predicted():
+    graph = DiGraph([(ROOT, "A"), ("A", "B")])
+    scores = np.array([[0.9, 0.9], [0.8, 0.8]])
+    y = np.array([[0, 1], [0, 0]])  # B without A is possible in the data, but A is never predicted
+
+    routed = routed_thresholds(scores, y, graph=graph, classes=["A", "B"])
+
+    assert_that(np.isinf(routed).tolist(), is_(equal_to([True, True])))
+
+
+def test_route_reproduces_the_classifier_walk_on_an_all_node_score_matrix():
+    """`route` is the emulation used for tuning: on the scores of a `-inf` prediction it must predict
+    exactly what the classifier predicts with the same thresholds and root fallback."""
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=-np.inf)
+    scores = clf.fit(X, y).predict_proba(X)
+    thresholds = np.full(len(mlb.classes_), 0.5)
+    thresholds[list(mlb.classes_).index("veg")] = np.inf
+    clf.set_params(mlb_prediction_threshold=thresholds, mlb_min_root_predictions=1)
+
+    emulated = route(scores, thresholds, clf.graph_, mlb.classes_, min_root=1)
+
+    assert_that(emulated.tolist(), is_(equal_to(clf.predict(X).tolist())))
+    assert_that(emulated.sum() > 0, is_(True))
+
+
+def test_routed_thresholds_model_the_root_fallback():
+    r"""With `min_root`, a sample that no root child accepts is forced into its best-scoring root
+    child during tuning, exactly as at prediction time, so it reaches that child's children.
+
+            ROOT
+           /    \
+          A      C
+          |
+          B
+    """
+    graph = DiGraph([(ROOT, "A"), (ROOT, "C"), ("A", "B")])
+    classes = ["A", "B", "C"]
+    scores = np.array(
+        [
+            [2.0, 3.0, -1.0],  # A, B
+            [2.0, 3.0, -1.0],  # A, B
+            [2.0, 1.0, -1.0],  # A
+            [-1.0, 0.0, 1.0],  # C
+            [0.1, 2.5, 0.0],  # nothing; rejected by A and C, forced into A by the fallback
+        ]
+    )
+    y = np.array([[1, 1, 0], [1, 1, 0], [1, 0, 0], [0, 0, 1], [0, 0, 0]])
+
+    without = routed_thresholds(scores, y, graph=graph, classes=classes)
+    with_fallback = routed_thresholds(scores, y, graph=graph, classes=classes, min_root=1)
+
+    assert_that(without[1], is_(close_to(2.0, delta=1e-9)))
+    assert_that(with_fallback[1], is_(close_to(2.75, delta=1e-9)))  # lifted above the forced row's 2.5
+
+
+def test_routed_thresholds_are_infinite_below_a_parent_outside_the_classes():
+    """A class whose only parent is not a column can never be routed to (the classifier learns
+    children only from columns), so it gets no finite threshold."""
+    graph = DiGraph([(ROOT, "P"), ("P", "C")])
+    scores = np.array([[0.9], [0.1]])
+    y = np.array([[1], [0]])
+
+    thresholds = routed_thresholds(scores, y, graph=graph, classes=["C"])
+
+    assert_that(np.isinf(thresholds[0]), is_(True))
+
+
+def test_threshold_tuners_reject_mismatched_shapes():
+    graph = DiGraph([(ROOT, "A"), (ROOT, "B")])
+    scores, y = np.zeros((4, 3)), np.zeros((4, 2), dtype=int)
+
+    with pytest.raises(ValueError, match="shape"):
+        scut_thresholds(scores, y)
+    with pytest.raises(ValueError, match="shape"):
+        routed_thresholds(scores, y, graph=graph, classes=["A", "B"])
+
+
+def test_route_reproduces_the_classifier_walk_with_an_unlearned_class():
+    """A class without positives at its parent is never learned there: its column in the `-inf`
+    score matrix is a placeholder that no threshold, however negative, may select. `scored` says
+    which cells are real, exactly as for the tuners."""
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=-np.inf)
+    y = y.copy()
+    y[:, list(mlb.classes_).index("carrot")] = 0  # carrot is never learned under veg
+    scores = clf.fit(X, y).predict_proba(X)
+    scored = np.broadcast_to(y.any(axis=0), scores.shape)
+    clf.set_params(mlb_prediction_threshold=-0.5)
+
+    emulated = route(scores, -0.5, clf.graph_, mlb.classes_, scored=scored)
+
+    assert_that(emulated.tolist(), is_(equal_to(clf.predict(X).tolist())))
+
+
+def test_route_predicts_a_superset_of_the_classifier_on_a_dag():
+    r"""The `-inf` matrix holds each class's best score over all parents, so a sample can be
+    routed to a class through a parent that rejects it at prediction time; never the reverse.
+
+            ROOT
+           /    \
+          A      B
+           \    /
+             C
+    """
+    rng = np.random.default_rng(0)
+    X = rng.normal(size=(200, 4))
+    y = np.zeros((200, 3), dtype=int)  # A, B, C
+    y[:, 0], y[:, 1] = X[:, 0] > 0, X[:, 1] > 0
+    y[:, 2] = (X[:, 2] > 0.3) & (y[:, 0] | y[:, 1])
+    y[y[:, 2] == 1, 0] |= (X[y[:, 2] == 1, 3] > 0).astype(int)  # C under A or B, sometimes both
+    graph = DiGraph([(ROOT, "A"), (ROOT, "B"), ("A", "C"), ("B", "C")])
+    mlb = MultiLabelBinarizer(classes=["A", "B", "C"]).fit([["A", "B", "C"]])
+    clf = HierarchicalClassifier(
+        base_estimator=OneVsRestClassifier(LogisticRegression()),
+        class_hierarchy=graph,
+        mlb=mlb,
+        mlb_prediction_threshold=-np.inf,
+    ).fit(X, y)
+    scores = clf.predict_proba(X)
+    clf.set_params(mlb_prediction_threshold=0.5)
+
+    emulated, native = route(scores, 0.5, graph, mlb.classes_), clf.predict(X)
+
+    assert_that(np.all(emulated >= native), is_(True))
+    assert_that(emulated[:, :2].tolist(), is_(equal_to(native[:, :2].tolist())))  # exact at the roots' children
+
+
+def test_route_treats_a_child_of_root_and_of_another_node_as_a_root_child():
+    """The classifier scores C at the root for every sample; A rejecting a sample must not hide C."""
+    graph = DiGraph([(ROOT, "A"), (ROOT, "C"), ("A", "C")])
+    scores = np.array([[-1.0, 0.9]])
+
+    assert_that(route(scores, 0.0, graph, ["A", "C"]).tolist(), is_(equal_to([[0, 1]])))
+
+
+def test_route_never_predicts_nodes_unreachable_from_the_root():
+    graph = DiGraph([(ROOT, "A"), ("stray", "Q")])
+    scores = np.array([[0.9, 0.9]])
+
+    assert_that(route(scores, -0.5, graph, ["A", "Q"], min_root=1).tolist(), is_(equal_to([[1, 0]])))
+
+
+def test_route_root_fallback_skips_unscored_root_children():
+    graph = DiGraph([(ROOT, "A"), (ROOT, "B")])
+    scores = np.array([[-1.0, 0.0]])
+    scored = np.array([[True, False]])
+
+    forced = route(scores, 0.0, graph, ["A", "B"], min_root=1, scored=scored)
+
+    assert_that(forced.tolist(), is_(equal_to([[1, 0]])))
+
+
+def test_route_root_fallback_breaks_ties_in_column_order_like_the_classifier():
+    graph = DiGraph([(ROOT, "Z"), (ROOT, "M"), (ROOT, "A")])
+    scores = np.array([[0.3, 0.3, 0.3]])  # columns A, M, Z
+
+    forced = route(scores, 0.5, graph, ["A", "M", "Z"], min_root=1)
+
+    assert_that(forced.tolist(), is_(equal_to([[1, 0, 0]])))
+
+
+def test_routed_thresholds_never_route_through_unscored_cells():
+    """An unscored placeholder at the root must not send rows into that child's subtree while tuning."""
+    graph = DiGraph([(ROOT, "A"), (ROOT, "B"), ("B", "C")])
+    scores = np.array([[-1.0, 0.0, 0.9], [-1.0, 0.0, 0.1]])
+    y = np.array([[0, 0, 1], [0, 0, 0]])  # C is a positive: routed there, it would get a finite threshold
+    scored = np.array([[True, False, True], [True, False, True]])
+
+    thresholds = routed_thresholds(scores, y, graph=graph, classes=["A", "B", "C"], scored=scored, min_root=1)
+
+    assert_that(np.isinf(thresholds[2]), is_(True))

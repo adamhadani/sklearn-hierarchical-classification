@@ -43,11 +43,18 @@ documents a parent mis-routes to it. Metafeatures still describe the subtree.
 `mlb_prediction_threshold` may be an array aligned with `mlb.classes_` (per-class cut-offs
 tuned on out-of-fold scores, validated again at predict since they are usually set after fit);
 predicting with `-inf` visits every node *learned at fit* and yields the score matrix for
-such tuning, which `thresholds.scut_thresholds` consumes. On a DAG that matrix reports the
-maximum over visited parents, which is exactly what routing compares to the threshold. Tune per class
-*locally* (pass `graph`): sibling-trained local classifiers give meaningless scores to
-out-of-subtree samples, and a global SCut on the all-node matrix gets worse than no tuning
-(RCV1: 0.819 vs 0.827 OOF micro-F1; local: 0.838). `mlb_min_root_predictions` forces the
+such tuning, which `thresholds.scut_thresholds` and `thresholds.routed_thresholds` consume. On a
+DAG that matrix reports the maximum over visited parents, which is exactly what routing compares
+to the threshold. Tune per class *locally* (pass `graph`): sibling-trained local classifiers give
+meaningless scores to out-of-subtree samples, and a global SCut on the all-node matrix gets worse
+than no tuning (RCV1, siblings, C=1, plain OOF micro-F1: global 0.819, none 0.827, local 0.838).
+`routed_thresholds` beats local SCut on micro-F1 (RCV1, inclusive, C=0.5, 2-fold cross-tuned
+OOF: 0.846 vs 0.839) at equal macro, but only with enough held-out positives per class (on
+GermEval every per-class scheme loses to one scalar threshold). `thresholds.route` is the one
+emulation of the multi-label walk on a score matrix and tests pin it to `predict` (exact on
+trees, a superset on DAGs): compare threshold policies through it, never by re-deriving the walk
+in a script. Per-node choice of base classifier family or C was measured and gives nothing on
+TF-IDF text (spike, Sept 2026): do not add a selector for it. `mlb_min_root_predictions` forces the
 best-scoring root children for samples that would otherwise get no top-level label. In
 multi-label mode a node only routes to children that had a positive example in its training
 set (`graph_.nodes[n][TRAINED_CLASSES]`): one-vs-rest gives an unlearned class a constant
