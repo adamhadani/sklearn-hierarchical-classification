@@ -3,6 +3,7 @@
 import numpy as np
 from networkx import descendants, topological_sort
 
+from sklearn_hierarchical_classification.array import top_k_mask
 from sklearn_hierarchical_classification.constants import ROOT
 
 
@@ -43,8 +44,7 @@ def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT, scored=None)
         Predict class j where `scores[:, j] > thresholds[j]`; `inf` for classes without positives.
 
     """
-    scores, y = np.asarray(scores, dtype=np.float64), np.asarray(y)
-    scored = np.ones(scores.shape, dtype=bool) if scored is None else np.asarray(scored, dtype=bool)
+    scores, y, scored = _validated(scores, y, scored)
     thresholds = []
     for j, rows in enumerate(_populations(y, graph, classes, root)):
         rows = rows[scored[rows, j]]
@@ -52,7 +52,7 @@ def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT, scored=None)
     return np.array(thresholds)
 
 
-def routed_thresholds(scores, y, graph, classes, root=ROOT, scored=None):
+def routed_thresholds(scores, y, graph, classes, root=ROOT, scored=None, min_root=0):
     """
     Per-class decision thresholds tuned sequentially, top-down, on the samples the hierarchy routes.
 
@@ -61,11 +61,17 @@ def routed_thresholds(scores, y, graph, classes, root=ROOT, scored=None):
     the parent. That is the population the class's threshold faces at prediction time: the parent's
     false positives are present as negatives and the parent's false negatives are absent, so the
     threshold maximises F1 under the actual routing instead of under perfect routing above it.
-    Children of a root are tuned on every sample; on a DAG a sample is routed to a class when any of
-    its parents predicts it. A class below one that is never predicted gets `inf`, as does a class
-    without positives among the samples routed to it.
+    Children of a root are tuned on every sample, and `min_root` replicates the classifier's
+    `mlb_min_root_predictions` fallback before descending. A class below one that is never predicted
+    (or whose parents are not among `classes`) gets `inf`, as does a class without positives among the
+    samples routed to it.
 
-    Parameters are as for `scut_thresholds`; `graph` and `classes` are required.
+    The walk is emulated with `route` on the score matrix, so it is exact on a tree. On a DAG the
+    matrix holds each class's maximum score over *all* its parents (the `-inf` prediction visits them
+    all), while at prediction time only parents that accept a sample score it, so a sample can be
+    routed here through a parent that would reject it there.
+
+    Parameters are as for `scut_thresholds` (`graph` and `classes` required) plus `min_root`.
 
     Returns
     -------
@@ -73,23 +79,47 @@ def routed_thresholds(scores, y, graph, classes, root=ROOT, scored=None):
         Predict class j where `scores[:, j] > thresholds[j]`.
 
     """
-    scores, y = np.asarray(scores, dtype=np.float64), np.asarray(y)
-    scored = np.ones(scores.shape, dtype=bool) if scored is None else np.asarray(scored, dtype=bool)
-    if classes is None or len(classes) != y.shape[1]:
-        raise ValueError("`classes` must name the hierarchy node of every column of `scores`")
-    column = {node: j for j, node in enumerate(classes)}
+    scores, y, scored = _validated(scores, y, scored)
     thresholds = np.full(y.shape[1], np.inf)
-    predicted = np.zeros(y.shape, dtype=bool)
-    for node in topological_sort(graph):
-        if node not in column:
-            continue
-        parents = [column[p] for p in _parents(graph, node, root) if p in column]
-        routed = predicted[:, parents].any(axis=1) if parents else np.ones(y.shape[0], dtype=bool)
-        j = column[node]
+
+    def tune(j, routed):
         rows = np.flatnonzero(routed & scored[:, j])
         thresholds[j] = best_f1_threshold(scores[rows, j], y[rows, j])
-        predicted[:, j] = routed & (scores[:, j] > thresholds[j])
+        return thresholds[j]
+
+    _route(scores, graph, classes, root, min_root, tune)
     return thresholds
+
+
+def route(scores, thresholds, graph, classes, root=ROOT, min_root=0):
+    """
+    Emulate `HierarchicalClassifier`'s multi-label walk on an all-node score matrix.
+
+    Given the scores of a `-inf` prediction (every learned node visited), predicts class j for the
+    samples with `scores[:, j] > thresholds[j]` whose parent (any parent, on a DAG) is predicted;
+    children of a root are considered for every sample, and `min_root` forces each sample's best
+    scoring root children when fewer are predicted, as `mlb_min_root_predictions` does. This is what
+    the classifier predicts with the same thresholds, which lets threshold policies be compared on
+    held-out scores without refitting.
+
+    Parameters
+    ----------
+    scores : array-like, shape = [n_samples, n_classes]
+    thresholds : float or array-like, shape = [n_classes]
+    graph : networkx.DiGraph
+    classes : sequence
+        The hierarchy node of each column of `scores`.
+    root : node, optional
+    min_root : int, optional
+
+    Returns
+    -------
+    y_pred : ndarray of int, shape = [n_samples, n_classes]
+
+    """
+    scores = np.asarray(scores, dtype=np.float64)
+    thresholds = np.broadcast_to(np.asarray(thresholds, dtype=np.float64), (scores.shape[1],))
+    return _route(scores, graph, classes, root, min_root, lambda j, routed: thresholds[j]).astype(int)
 
 
 def label_cardinality_threshold(scores, target_cardinality, candidates=None):
@@ -128,13 +158,54 @@ def best_f1_threshold(scores, y):
     return float(np.nextafter(ranked_scores[best], -np.inf))
 
 
+def _validated(scores, y, scored):
+    scores, y = np.asarray(scores, dtype=np.float64), np.asarray(y)
+    scored = np.ones(scores.shape, dtype=bool) if scored is None else np.asarray(scored, dtype=bool)
+    if scores.ndim != 2 or scores.shape != y.shape or scored.shape != y.shape:
+        raise ValueError(
+            "`scores`, `y` and `scored` must share one shape (n_samples, n_classes); got "
+            f"{scores.shape}, {y.shape} and {scored.shape}"
+        )
+    return scores, y, scored
+
+
+def _column_index(classes, n_classes):
+    if classes is None or len(classes) != n_classes:
+        raise ValueError("`classes` must name the hierarchy node of every column of `scores`")
+    return {node: j for j, node in enumerate(classes)}
+
+
+def _route(scores, graph, classes, root, min_root, threshold_for):
+    """The top-down walk shared by `route` and `routed_thresholds`: classes are visited parents first,
+    `threshold_for(column, routed)` is asked for each one's threshold given the mask of samples its parents
+    route to it, and the samples above that threshold are predicted. Children of a root come first, all of
+    them before the fallback forces `min_root` of them per sample. Returns the boolean prediction matrix."""
+    column = _column_index(classes, scores.shape[1])
+    predicted = np.zeros(scores.shape, dtype=bool)
+    order = [node for node in topological_sort(graph) if node in column]
+    top = [column[node] for node in order if not _parents(graph, node, root)]
+    everyone = np.ones(scores.shape[0], dtype=bool)
+    for j in top:
+        predicted[:, j] = scores[:, j] > threshold_for(j, everyone)
+    if min_root and top:
+        short = np.flatnonzero(predicted[:, top].sum(axis=1) < min_root)
+        predicted[np.ix_(short, top)] |= top_k_mask(scores[np.ix_(short, top)], min_root)
+    for node in order:
+        parents = _parents(graph, node, root)
+        if not parents:
+            continue
+        parent_columns = [column[p] for p in parents if p in column]
+        routed = predicted[:, parent_columns].any(axis=1) if parent_columns else ~everyone
+        j = column[node]
+        predicted[:, j] = routed & (scores[:, j] > threshold_for(j, routed))
+    return predicted
+
+
 def _populations(y, graph, classes, root):
     """Per column, the row indices to tune on: all rows, or the rows truly under the class's parent."""
     if graph is None:
         return [np.arange(y.shape[0])] * y.shape[1]
-    if classes is None or len(classes) != y.shape[1]:
-        raise ValueError("`classes` must name the hierarchy node of every column of `scores` when `graph` is given")
-    column = {node: j for j, node in enumerate(classes)}
+    column = _column_index(classes, y.shape[1])
     populations = []
     for node in classes:
         if node not in graph:

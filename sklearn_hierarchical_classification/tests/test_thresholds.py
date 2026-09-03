@@ -3,13 +3,16 @@
 import time
 
 import numpy as np
+import pytest
 from hamcrest import assert_that, close_to, equal_to, is_
 from networkx import DiGraph
 
 from sklearn_hierarchical_classification.constants import ROOT
+from sklearn_hierarchical_classification.tests.test_classifier import make_fruit_veg_mlb_classifier
 from sklearn_hierarchical_classification.thresholds import (
     best_f1_threshold,
     label_cardinality_threshold,
+    route,
     routed_thresholds,
     scut_thresholds,
 )
@@ -191,3 +194,70 @@ def test_routed_thresholds_are_infinite_below_a_class_that_is_never_predicted():
     routed = routed_thresholds(scores, y, graph=graph, classes=["A", "B"])
 
     assert_that(np.isinf(routed).tolist(), is_(equal_to([True, True])))
+
+
+def test_route_reproduces_the_classifier_walk_on_an_all_node_score_matrix():
+    """`route` is the emulation used for tuning: on the scores of a `-inf` prediction it must predict
+    exactly what the classifier predicts with the same thresholds and root fallback."""
+    clf, X, y, mlb = make_fruit_veg_mlb_classifier(mlb_prediction_threshold=-np.inf)
+    scores = clf.fit(X, y).predict_proba(X)
+    thresholds = np.full(len(mlb.classes_), 0.5)
+    thresholds[list(mlb.classes_).index("veg")] = np.inf
+    clf.set_params(mlb_prediction_threshold=thresholds, mlb_min_root_predictions=1)
+
+    emulated = route(scores, thresholds, clf.graph_, mlb.classes_, min_root=1)
+
+    assert_that(emulated.tolist(), is_(equal_to(clf.predict(X).tolist())))
+    assert_that(emulated.sum() > 0, is_(True))
+
+
+def test_routed_thresholds_model_the_root_fallback():
+    r"""With `min_root`, a sample that no root child accepts is forced into its best-scoring root
+    child during tuning, exactly as at prediction time, so it reaches that child's children.
+
+            ROOT
+           /    \
+          A      C
+          |
+          B
+    """
+    graph = DiGraph([(ROOT, "A"), (ROOT, "C"), ("A", "B")])
+    classes = ["A", "B", "C"]
+    scores = np.array(
+        [
+            [2.0, 3.0, -1.0],  # A, B
+            [2.0, 3.0, -1.0],  # A, B
+            [2.0, 1.0, -1.0],  # A
+            [-1.0, 0.0, 1.0],  # C
+            [0.1, 2.5, 0.0],  # nothing; rejected by A and C, forced into A by the fallback
+        ]
+    )
+    y = np.array([[1, 1, 0], [1, 1, 0], [1, 0, 0], [0, 0, 1], [0, 0, 0]])
+
+    without = routed_thresholds(scores, y, graph=graph, classes=classes)
+    with_fallback = routed_thresholds(scores, y, graph=graph, classes=classes, min_root=1)
+
+    assert_that(without[1], is_(close_to(2.0, delta=1e-9)))
+    assert_that(with_fallback[1], is_(close_to(2.75, delta=1e-9)))  # lifted above the forced row's 2.5
+
+
+def test_routed_thresholds_are_infinite_below_a_parent_outside_the_classes():
+    """A class whose only parent is not a column can never be routed to (the classifier learns
+    children only from columns), so it gets no finite threshold."""
+    graph = DiGraph([(ROOT, "P"), ("P", "C")])
+    scores = np.array([[0.9], [0.1]])
+    y = np.array([[1], [0]])
+
+    thresholds = routed_thresholds(scores, y, graph=graph, classes=["C"])
+
+    assert_that(np.isinf(thresholds[0]), is_(True))
+
+
+def test_threshold_tuners_reject_mismatched_shapes():
+    graph = DiGraph([(ROOT, "A"), (ROOT, "B")])
+    scores, y = np.zeros((4, 3)), np.zeros((4, 2), dtype=int)
+
+    with pytest.raises(ValueError, match="shape"):
+        scut_thresholds(scores, y)
+    with pytest.raises(ValueError, match="shape"):
+        routed_thresholds(scores, y, graph=graph, classes=["A", "B"])

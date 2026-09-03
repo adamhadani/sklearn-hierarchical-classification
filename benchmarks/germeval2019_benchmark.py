@@ -6,10 +6,12 @@ Remus, Aly and Biemann (2019). 343 genre labels in a 4-level tree with 8 root ge
 training, 2,079 development and 4,157 test blurbs. Subtask A scores the root genres, subtask B the
 full label set of each blurb (micro-F1 in both). The winning subtask-B system (TwistBytes, Benites
 2019, micro-F1 0.6767) used this library with TF-IDF + LinearSVC local classifiers and a negative
-decision threshold to trade precision for recall; this script follows that recipe on TF-IDF
-features fitted once on the training text. Local classifiers use the "inclusive" training strategy
-by default (every out-of-subtree blurb is a negative at every node); --training-strategy siblings
-trains each node on its own subtree only.
+decision threshold to trade precision for recall. This script follows that recipe with one
+difference: the TF-IDF vocabularies are fitted once on the whole training text and shared by every
+node, where the winning system fitted them per node on the node's own subtree. Local classifiers
+use the "inclusive" training strategy by default (every out-of-subtree blurb is a negative at every
+node, which makes a shared vocabulary the natural choice); --training-strategy siblings trains each
+node on its own subtree only.
 
 Protocol: the configuration (feature set, decision threshold, root fallback) is chosen on the
 development split with models fitted on the training split only; the model is then refitted on
@@ -36,7 +38,7 @@ import zipfile
 from pathlib import Path
 
 import numpy as np
-from networkx import DiGraph, topological_sort
+from networkx import DiGraph
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import f1_score
 from sklearn.multiclass import OneVsRestClassifier
@@ -46,6 +48,7 @@ from sklearn.svm import LinearSVC
 
 from sklearn_hierarchical_classification.classifier import HierarchicalClassifier
 from sklearn_hierarchical_classification.constants import ROOT
+from sklearn_hierarchical_classification.thresholds import route
 
 
 PACKAGE_URL = (
@@ -114,23 +117,8 @@ def make_classifier(graph, mlb, C, strategy, threshold, min_root=0):
 
 def vectorize(features, fit_docs, *docs):
     """TF-IDF views of a feature set, fitted on `fit_docs` only; returns one matrix per argument."""
-    vectorizer = FeatureUnion(FEATURE_SETS[features]()).fit(fit_docs)
-    return [vectorizer.transform(d) for d in (fit_docs, *docs)]
-
-
-def consistent(scores, threshold, graph, columns, min_root=0, root_columns=()):
-    """Emulate the native walk on an all-node score matrix: positive iff above threshold and parent positive,
-    with the best-scoring root child forced positive for samples without one when `min_root` is 1."""
-    predicted = (scores > threshold).astype(int)
-    if min_root:
-        missing = np.flatnonzero(predicted[:, root_columns].sum(axis=1) == 0)
-        best_root = np.asarray(root_columns)[np.argmax(scores[missing][:, root_columns], axis=1)]
-        predicted[missing, best_root] = 1
-    for node in topological_sort(graph):
-        if node == ROOT or next(graph.predecessors(node)) == ROOT:
-            continue
-        predicted[:, columns[node]] &= predicted[:, columns[next(graph.predecessors(node))]]
-    return predicted
+    vectorizer = FeatureUnion(FEATURE_SETS[features]())
+    return [vectorizer.fit_transform(fit_docs), *(vectorizer.transform(d) for d in docs)]
 
 
 def micro_f1(y_true, y_pred):
@@ -165,7 +153,7 @@ def main():
     )
 
     # --- choose feature set, threshold and root fallback on dev (models fitted on train only), using every
-    #     node's score (threshold -inf visits all nodes) and emulating the walk for each candidate
+    #     node's score (threshold -inf visits all nodes) and emulating the walk (`thresholds.route`) per candidate
     grid = np.round(np.arange(-0.5, 0.21, 0.05), 2)
     dev_f1 = {}
     for features in FEATURE_SETS:
@@ -176,9 +164,7 @@ def main():
         print(f"{features} features: fit on train + score dev {time.perf_counter() - start:.0f}s", flush=True)
         for min_root in (0, 1):
             for t in grid:
-                dev_f1[(features, t, min_root)] = micro_f1(
-                    Y_dev, consistent(scores_dev, t, graph, columns, min_root, root_columns)
-                )
+                dev_f1[(features, t, min_root)] = micro_f1(Y_dev, route(scores_dev, t, graph, nodes, min_root=min_root))
         best = max((k for k in dev_f1 if k[0] == features), key=dev_f1.get)
         print(f"  best on dev: threshold {best[1]:+.2f}, min_root {best[2]}: subtask-B micro-F1 {dev_f1[best]:.4f}")
     chosen = max(dev_f1, key=dev_f1.get)
@@ -187,9 +173,10 @@ def main():
     # --- refit on train + dev, score the test set once per pre-registered configuration
     X_all, Y_all = X_train + X_dev, np.vstack([Y_train, Y_dev])
     configurations = {"default (light, threshold 0)": ("light", 0.0, 0), "dev-selected": chosen}
+    matrices = {features: vectorize(features, X_all, X_test) for features in {f for f, _, _ in configurations.values()}}
     for name, (features, threshold, min_root) in configurations.items():
+        F_all, F_test = matrices[features]
         start = time.perf_counter()
-        F_all, F_test = vectorize(features, X_all, X_test)
         clf = make_classifier(graph, mlb, args.C, strategy, threshold, min_root).fit(F_all, Y_all)
         t_fit = time.perf_counter() - start
         start = time.perf_counter()

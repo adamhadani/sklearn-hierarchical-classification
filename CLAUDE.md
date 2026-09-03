@@ -47,10 +47,13 @@ such tuning, which `thresholds.scut_thresholds` and `thresholds.routed_threshold
 DAG that matrix reports the maximum over visited parents, which is exactly what routing compares
 to the threshold. Tune per class *locally* (pass `graph`): sibling-trained local classifiers give
 meaningless scores to out-of-subtree samples, and a global SCut on the all-node matrix gets worse
-than no tuning (RCV1: 0.819 vs 0.827 OOF micro-F1; local: 0.838). `routed_thresholds` tunes
-sequentially top-down on the rows the already-tuned parent threshold routes, i.e. the population
-the class faces at predict time; it beats local SCut on micro-F1 (RCV1 OOF 0.846 vs 0.839) at equal
-macro. Per-class thresholds need enough held-out positives per class: on GermEval (343 labels,
+than no tuning (RCV1, siblings, C=1, plain OOF micro-F1: global 0.819, none 0.827, local 0.838).
+`routed_thresholds` tunes sequentially top-down on the rows the already-tuned parent threshold
+routes (with the root fallback modelled through `min_root`), i.e. the population the class faces
+at predict time; it beats local SCut on micro-F1 (RCV1, inclusive, C=0.5, 2-fold cross-tuned OOF:
+0.846 vs 0.839) at equal macro. `route` is the one emulation of the multi-label walk on a score
+matrix (tests pin it to `predict`); tune and compare threshold policies through it rather than
+re-deriving the walk. Per-class thresholds need enough held-out positives per class: on GermEval (343 labels,
 2k dev blurbs) every per-class scheme loses to one scalar threshold. Inclusive training beats
 siblings on both text benchmarks (about +2 points micro-F1) and is the benchmark default; per-node
 choice of base classifier family or C was measured and gives nothing on TF-IDF text (spike, Sept

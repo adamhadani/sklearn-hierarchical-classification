@@ -17,7 +17,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.utils.multiclass import check_classification_targets
 from sklearn.utils.validation import check_array, check_is_fitted, validate_data
 
-from sklearn_hierarchical_classification.array import flatten_list, nnz_columns_count
+from sklearn_hierarchical_classification.array import flatten_list, nnz_columns_count, top_k_mask
 from sklearn_hierarchical_classification.constants import (
     CLASSIFIER,
     DEFAULT,
@@ -427,7 +427,7 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
         if node_id == self.root and self.mlb_min_root_predictions:
             # Samples with too few root labels get their best-scoring children regardless of thresholds
             short = selected.sum(axis=1) < self.mlb_min_root_predictions
-            selected[short] |= self._top_children(child_scores[short], self.mlb_min_root_predictions)
+            selected[short] |= top_k_mask(child_scores[short], self.mlb_min_root_predictions)
 
         next_nodes = []
         for k, local_column in enumerate(local):
@@ -435,17 +435,6 @@ class HierarchicalClassifier(MetaEstimatorMixin, ClassifierMixin, BaseEstimator)
             if selected[:, k].any():
                 next_nodes.append((child, state.record(child, rows[selected[:, k]])))
         return next_nodes
-
-    @staticmethod
-    def _top_children(child_scores, minimum):
-        """Mask of each sample's `minimum` best-scoring children (all False when `minimum` is 0)."""
-        n_samples, n_children = child_scores.shape
-        top = np.zeros((n_samples, n_children), dtype=bool)
-        k = min(minimum, n_children)
-        if k > 0:
-            best = np.argsort(-child_scores, axis=1)[:, :k]
-            top[np.arange(n_samples)[:, None], best] = True
-        return top
 
     def _class_thresholds(self):
         """One prediction threshold per `mlb.classes_` column, validated (thresholds may be set after fit)."""

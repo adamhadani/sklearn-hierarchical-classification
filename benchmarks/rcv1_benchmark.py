@@ -27,7 +27,7 @@ Example:
     uv run python benchmarks/rcv1_benchmark.py                 # full test set
     uv run python benchmarks/rcv1_benchmark.py --n-test 100000  # quicker
     uv run python benchmarks/rcv1_benchmark.py --tune --C 0.5   # + per-class thresholds from CV
-    uv run python benchmarks/rcv1_benchmark.py --tune --training-strategy siblings --thresholds scut
+    uv run python benchmarks/rcv1_benchmark.py --tune --training-strategy siblings --thresholds scut --min-root 0
 
 """
 
@@ -81,7 +81,7 @@ def make_hierarchical(graph, mlb, C, strategy, threshold=0.0, min_root=0):
     )
 
 
-def tuned_thresholds(graph, mlb, C, strategy, method, X, y, n_folds=5):
+def tuned_thresholds(graph, mlb, C, strategy, method, min_root, X, y, n_folds=5):
     """Per-class thresholds ("routed" or "scut") from out-of-fold all-node scores on the training set."""
     scores, scored = np.zeros(y.shape), np.zeros(y.shape, dtype=bool)
     for fit_rows, score_rows in KFold(n_folds, shuffle=True, random_state=0).split(X):
@@ -89,8 +89,9 @@ def tuned_thresholds(graph, mlb, C, strategy, method, X, y, n_folds=5):
         scores[score_rows] = clf.predict_proba(X[score_rows])
         # A class without positives in this fold's training part is not learned, hence not scored
         scored[score_rows] = y[fit_rows].any(axis=0)
-    tune = routed_thresholds if method == "routed" else scut_thresholds
-    return tune(scores, y, graph=graph, classes=mlb.classes_, scored=scored)
+    if method == "routed":
+        return routed_thresholds(scores, y, graph=graph, classes=mlb.classes_, scored=scored, min_root=min_root)
+    return scut_thresholds(scores, y, graph=graph, classes=mlb.classes_, scored=scored)
 
 
 def timed(fn, *args):
@@ -161,10 +162,10 @@ def main():
     if args.tune:
         y_train_dense = y_train.toarray()
         thresholds, t_tune = timed(
-            tuned_thresholds, graph, mlb, args.C, strategy, args.thresholds, X_train, y_train_dense
+            tuned_thresholds, graph, mlb, args.C, strategy, args.thresholds, args.min_root, X_train, y_train_dense
         )
-        clf = make_hierarchical(graph, mlb, args.C, strategy, threshold=thresholds, min_root=args.min_root)
-        _, t_fit = timed(clf.fit, X_train, y_train)
+        # Thresholds are read at predict time: the model fitted above is reused as is
+        clf.set_params(mlb_prediction_threshold=thresholds)
         y_hier, t_predict = timed(clf.predict, X_test)
         report(f"{strategy} + {args.thresholds} (CV)", y_test, y_hier, graph_by_column, t_fit + t_tune, t_predict)
 

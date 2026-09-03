@@ -138,18 +138,19 @@ with `LinearSVC` base classifiers; every tuned setting (training strategy, thres
 | Model | micro-F1 | macro-F1 | hF1 | fit | predict (781k docs) |
 |---|---:|---:|---:|---:|---:|
 | Flat `OneVsRest(LinearSVC)`, threshold 0 | 0.804 | 0.486 | 0.808 | 3.7 s | 5.7 s |
-| LCPN, siblings-trained nodes, threshold 0 (`--training-strategy siblings --min-root 0`) | 0.796 | 0.514 | 0.796 | 1.9 s | 2.2 s |
-| LCPN, siblings + per-class local SCut from CV (`... --tune --thresholds scut`) | 0.792 | 0.595 | 0.792 | 10.6 s | 2.3 s |
-| LCPN, inclusive-trained nodes + routed thresholds from CV, root fallback (`--tune`) | 0.812 | 0.605 | 0.812 | 31.1 s | 2.4 s |
-| Same with `--C 0.5` (chosen on out-of-fold micro-F1) | **0.816** | **0.609** | 0.816 | 27.2 s | 2.3 s |
+| LCPN, siblings-trained nodes, threshold 0 (`--training-strategy siblings --min-root 0`) | 0.796 | 0.514 | 0.796 | 2.0 s | 2.3 s |
+| LCPN, siblings + per-class local SCut from CV (`... --tune --thresholds scut`) | 0.792 | 0.595 | 0.792 | 10.8 s | 2.4 s |
+| LCPN, inclusive-trained nodes + routed thresholds from CV, root fallback (`--tune`) | 0.812 | 0.605 | 0.812 | 30.7 s | 2.3 s |
+| Same with `--C 0.5` (chosen on out-of-fold micro-F1) | **0.816** | **0.609** | 0.816 | 29.5 s | 2.4 s |
 | Published SVM, per-category tuned thresholds (Lewis et al. 2004) | 0.816 | 0.607 | | | |
 
 `benchmarks/germeval2019_benchmark.py` runs GermEval 2019 Task 1 (German book blurbs, 343 genres in a
 4-level tree, 14,548 / 2,079 / 4,157 train / dev / test), whose winning system used this library.
 With inclusive training, a decision threshold and root fallback chosen on the development split, the
-test subtask-B micro-F1 is 0.651 (siblings-trained nodes: 0.634; published TwistBytes system, a
-heavier TF-IDF ensemble, 0.677). Per-class thresholds are not used there: most labels have too few
-development positives for them, and a single threshold wins in cross-tuning.
+test subtask-B micro-F1 is 0.651 (siblings-trained nodes: 0.634; published TwistBytes system, which
+ensembled three TF-IDF views fitted per node rather than one shared vocabulary, 0.677). Per-class
+thresholds are not used there: most labels have too few development positives for them, and a single
+threshold wins in cross-tuning.
 
     uv run python benchmarks/bench.py --help
     uv run python benchmarks/rcv1_benchmark.py
