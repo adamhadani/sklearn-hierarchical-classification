@@ -57,10 +57,12 @@ y_pred = clf.predict(X_test)
 The base estimator must expose `predict_proba` (or `decision_function`, when
 `use_decision_function=True`). For multi-label hierarchies pass the fitted `MultiLabelBinarizer` as
 `mlb`; `mlb_prediction_threshold` then takes either one threshold or one per class, and
-`training_strategy="inclusive"` trains each node on out-of-subtree documents as negatives as well, which
-lets tuned thresholds recover from routing mistakes higher up. `sklearn_hierarchical_classification.thresholds` tunes such
-thresholds from held-out scores (per-class SCut, optionally local to each parent, or a single
-label-cardinality threshold). See [examples/](./examples/) for a
+`training_strategy="inclusive"` trains each node on out-of-subtree documents as negatives as well, so a
+node can reject what its parent mis-routes to it (about two points micro-F1 on the benchmarks below).
+`sklearn_hierarchical_classification.thresholds` tunes thresholds from held-out scores: per-class SCut,
+optionally local to each parent; per-class *routed* thresholds, tuned top-down on the samples the
+hierarchy actually routes to each class; or a single label-cardinality threshold. See
+[examples/](./examples/) for a
 complete, runnable example that also demonstrates the hierarchical evaluation metrics.
 
 ### Jupyter notebooks
@@ -129,15 +131,25 @@ The project is managed with [uv](https://docs.astral.sh/uv/). All tooling config
 `benchmarks/bench.py` times fit/predict on synthetic sparse data and hierarchies of configurable
 shape; `benchmarks/rcv1_benchmark.py` runs the classic RCV1-v2 newswire benchmark (Lewis et al.
 2004: 103 topics in a 4-root hierarchy, 23,149 training and 781,265 test documents, fetched via
-scikit-learn) against a flat one-vs-rest baseline on the same TF-IDF features. Results on a laptop,
-`LinearSVC` base classifiers, decision-function threshold 0 (no per-category tuning):
+scikit-learn) against a flat one-vs-rest baseline on the same TF-IDF features. Results on a laptop
+with `LinearSVC` base classifiers; every tuned setting (training strategy, thresholds, root fallback,
+`C`) was chosen on 5-fold out-of-fold scores of the training set and the test set scored once:
 
 | Model | micro-F1 | macro-F1 | hF1 | fit | predict (781k docs) |
 |---|---:|---:|---:|---:|---:|
-| Flat `OneVsRest(LinearSVC)` | 0.804 | 0.486 | 0.808 | 3.7 s | 5.7 s |
-| `HierarchicalClassifier` (LCPN, `LinearSVC` per node) | 0.796 | 0.514 | 0.796 | 1.9 s | 2.2 s |
-| `HierarchicalClassifier` + per-class thresholds tuned by 5-fold CV (`--tune`) | 0.792 | 0.595 | 0.792 | 10.6 s | 2.3 s |
+| Flat `OneVsRest(LinearSVC)`, threshold 0 | 0.804 | 0.486 | 0.808 | 3.7 s | 5.7 s |
+| LCPN, siblings-trained nodes, threshold 0 (`--training-strategy siblings --min-root 0`) | 0.796 | 0.514 | 0.796 | 1.9 s | 2.2 s |
+| LCPN, siblings + per-class local SCut from CV (`... --tune --thresholds scut`) | 0.792 | 0.595 | 0.792 | 10.6 s | 2.3 s |
+| LCPN, inclusive-trained nodes + routed thresholds from CV, root fallback (`--tune`) | 0.812 | 0.605 | 0.812 | 31.1 s | 2.4 s |
+| Same with `--C 0.5` (chosen on out-of-fold micro-F1) | **0.816** | **0.609** | 0.816 | 27.2 s | 2.3 s |
 | Published SVM, per-category tuned thresholds (Lewis et al. 2004) | 0.816 | 0.607 | | | |
+
+`benchmarks/germeval2019_benchmark.py` runs GermEval 2019 Task 1 (German book blurbs, 343 genres in a
+4-level tree, 14,548 / 2,079 / 4,157 train / dev / test), whose winning system used this library.
+With inclusive training, a decision threshold and root fallback chosen on the development split, the
+test subtask-B micro-F1 is 0.651 (siblings-trained nodes: 0.634; published TwistBytes system, a
+heavier TF-IDF ensemble, 0.677). Per-class thresholds are not used there: most labels have too few
+development positives for them, and a single threshold wins in cross-tuning.
 
     uv run python benchmarks/bench.py --help
     uv run python benchmarks/rcv1_benchmark.py

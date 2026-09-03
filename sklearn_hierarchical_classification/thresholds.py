@@ -1,7 +1,7 @@
 """Decision-threshold tuning for multi-label prediction scores."""
 
 import numpy as np
-from networkx import descendants
+from networkx import descendants, topological_sort
 
 from sklearn_hierarchical_classification.constants import ROOT
 
@@ -50,6 +50,46 @@ def scut_thresholds(scores, y, graph=None, classes=None, root=ROOT, scored=None)
         rows = rows[scored[rows, j]]
         thresholds.append(best_f1_threshold(scores[rows, j], y[rows, j]))
     return np.array(thresholds)
+
+
+def routed_thresholds(scores, y, graph, classes, root=ROOT, scored=None):
+    """
+    Per-class decision thresholds tuned sequentially, top-down, on the samples the hierarchy routes.
+
+    Like `scut_thresholds` with a graph, except that each class is tuned on the samples its parent
+    *predicts* under the parent's own, already tuned threshold rather than on the samples truly under
+    the parent. That is the population the class's threshold faces at prediction time: the parent's
+    false positives are present as negatives and the parent's false negatives are absent, so the
+    threshold maximises F1 under the actual routing instead of under perfect routing above it.
+    Children of a root are tuned on every sample; on a DAG a sample is routed to a class when any of
+    its parents predicts it. A class below one that is never predicted gets `inf`, as does a class
+    without positives among the samples routed to it.
+
+    Parameters are as for `scut_thresholds`; `graph` and `classes` are required.
+
+    Returns
+    -------
+    thresholds : ndarray, shape = [n_classes]
+        Predict class j where `scores[:, j] > thresholds[j]`.
+
+    """
+    scores, y = np.asarray(scores, dtype=np.float64), np.asarray(y)
+    scored = np.ones(scores.shape, dtype=bool) if scored is None else np.asarray(scored, dtype=bool)
+    if classes is None or len(classes) != y.shape[1]:
+        raise ValueError("`classes` must name the hierarchy node of every column of `scores`")
+    column = {node: j for j, node in enumerate(classes)}
+    thresholds = np.full(y.shape[1], np.inf)
+    predicted = np.zeros(y.shape, dtype=bool)
+    for node in topological_sort(graph):
+        if node not in column:
+            continue
+        parents = [column[p] for p in _parents(graph, node, root) if p in column]
+        routed = predicted[:, parents].any(axis=1) if parents else np.ones(y.shape[0], dtype=bool)
+        j = column[node]
+        rows = np.flatnonzero(routed & scored[:, j])
+        thresholds[j] = best_f1_threshold(scores[rows, j], y[rows, j])
+        predicted[:, j] = routed & (scores[:, j] > thresholds[j])
+    return thresholds
 
 
 def label_cardinality_threshold(scores, target_cardinality, candidates=None):
@@ -101,8 +141,7 @@ def _populations(y, graph, classes, root):
             # Not a hierarchy node: never scored, no threshold to tune
             populations.append(np.empty(0, dtype=np.intp))
             continue
-        # Children of a root (the given sentinel, or any node without parents) are tuned on every sample
-        parents = [p for p in graph.predecessors(node) if p != root and graph.in_degree(p) > 0]
+        parents = _parents(graph, node, root)
         if not parents:
             populations.append(np.arange(y.shape[0]))
             continue
@@ -114,3 +153,8 @@ def _populations(y, graph, classes, root):
         under_columns = [column[n] for n in under if n in column]
         populations.append(np.flatnonzero(y[:, under_columns].any(axis=1)))
     return populations
+
+
+def _parents(graph, node, root):
+    """The parents that route to `node`: a root (the given sentinel, or any node without parents) does not."""
+    return [p for p in graph.predecessors(node) if p != root and graph.in_degree(p) > 0]

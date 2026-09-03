@@ -5,13 +5,18 @@ GermEval 2019 Task 1 benchmark: hierarchical classification of German book blurb
 Remus, Aly and Biemann (2019). 343 genre labels in a 4-level tree with 8 root genres; 14,548
 training, 2,079 development and 4,157 test blurbs. Subtask A scores the root genres, subtask B the
 full label set of each blurb (micro-F1 in both). The winning subtask-B system (TwistBytes, Benites
-2019, micro-F1 0.6767) used this library in raw mode with a per-node TF-IDF + LinearSVC pipeline
-and a negative decision threshold to trade precision for recall; this script follows that recipe.
+2019, micro-F1 0.6767) used this library with TF-IDF + LinearSVC local classifiers and a negative
+decision threshold to trade precision for recall; this script follows that recipe on TF-IDF
+features fitted once on the training text. Local classifiers use the "inclusive" training strategy
+by default (every out-of-subtree blurb is a negative at every node); --training-strategy siblings
+trains each node on its own subtree only.
 
 Protocol: the configuration (feature set, decision threshold, root fallback) is chosen on the
 development split with models fitted on the training split only; the model is then refitted on
 train + dev and the test set is scored once for the default configuration (light features,
-threshold 0) and once for the dev-selected one.
+threshold 0) and once for the dev-selected one. Per-class thresholds are not tuned here: most of
+the 343 labels have too few development positives for that (they hurt on dev in 2-fold
+cross-tuning), so one global threshold is selected.
 
 The official data package (CC BY-NC 4.0, University of Hamburg Language Technology group) is
 downloaded on first use into ~/scikit_learn_data/germeval2019.
@@ -35,7 +40,7 @@ from networkx import DiGraph, topological_sort
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics import f1_score
 from sklearn.multiclass import OneVsRestClassifier
-from sklearn.pipeline import FeatureUnion, make_pipeline
+from sklearn.pipeline import FeatureUnion
 from sklearn.preprocessing import MultiLabelBinarizer
 from sklearn.svm import LinearSVC
 
@@ -95,20 +100,22 @@ FEATURE_SETS = {
 }
 
 
-def make_base_estimator(C, features):
-    return make_pipeline(FeatureUnion(FEATURE_SETS[features]()), OneVsRestClassifier(LinearSVC(C=C)))
-
-
-def make_classifier(graph, mlb, C, features, threshold, min_root=0):
+def make_classifier(graph, mlb, C, strategy, threshold, min_root=0):
     return HierarchicalClassifier(
-        base_estimator=make_base_estimator(C, features),
+        base_estimator=OneVsRestClassifier(LinearSVC(C=C)),
         class_hierarchy=graph,
-        feature_extraction="raw",
         mlb=mlb,
         use_decision_function=True,
+        training_strategy=strategy,
         mlb_prediction_threshold=threshold,
         mlb_min_root_predictions=min_root,
     )
+
+
+def vectorize(features, fit_docs, *docs):
+    """TF-IDF views of a feature set, fitted on `fit_docs` only; returns one matrix per argument."""
+    vectorizer = FeatureUnion(FEATURE_SETS[features]()).fit(fit_docs)
+    return [vectorizer.transform(d) for d in (fit_docs, *docs)]
 
 
 def consistent(scores, threshold, graph, columns, min_root=0, root_columns=()):
@@ -134,8 +141,12 @@ def main():
     warnings.filterwarnings("ignore", message="Label .* is present in all training examples", category=UserWarning)
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("--C", type=float, default=1.5, help="LinearSVC regularisation (the paper used 1.5)")
+    parser.add_argument(
+        "--training-strategy", choices=("inclusive", "siblings"), default="inclusive", help="local training sets"
+    )
     parser.add_argument("--cache-dir", type=Path, default=Path.home() / "scikit_learn_data" / "germeval2019")
     args = parser.parse_args()
+    strategy = args.training_strategy
 
     graph = make_hierarchy(fetch("hierarchy", args.cache_dir))
     nodes = [node for node in graph.nodes if node != ROOT]
@@ -159,7 +170,9 @@ def main():
     dev_f1 = {}
     for features in FEATURE_SETS:
         start = time.perf_counter()
-        scores_dev = make_classifier(graph, mlb, args.C, features, -np.inf).fit(X_train, Y_train).predict_proba(X_dev)
+        F_train, F_dev = vectorize(features, X_train, X_dev)
+        clf = make_classifier(graph, mlb, args.C, strategy, -np.inf).fit(F_train, Y_train)
+        scores_dev = clf.predict_proba(F_dev)
         print(f"{features} features: fit on train + score dev {time.perf_counter() - start:.0f}s", flush=True)
         for min_root in (0, 1):
             for t in grid:
@@ -176,10 +189,11 @@ def main():
     configurations = {"default (light, threshold 0)": ("light", 0.0, 0), "dev-selected": chosen}
     for name, (features, threshold, min_root) in configurations.items():
         start = time.perf_counter()
-        clf = make_classifier(graph, mlb, args.C, features, threshold, min_root).fit(X_all, Y_all)
+        F_all, F_test = vectorize(features, X_all, X_test)
+        clf = make_classifier(graph, mlb, args.C, strategy, threshold, min_root).fit(F_all, Y_all)
         t_fit = time.perf_counter() - start
         start = time.perf_counter()
-        Y_pred = clf.predict(X_test)
+        Y_pred = clf.predict(F_test)
         t_predict = time.perf_counter() - start
         print(
             f"TEST {name:<28} ({features}, t={threshold:+.2f}, min_root={min_root})   "
