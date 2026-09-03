@@ -87,10 +87,12 @@ top-down. Inclusive training requires `mlb`.
 
 ```python
 import numpy as np
+from sklearn.base import clone
 from sklearn.model_selection import KFold
 
 from sklearn_hierarchical_classification.thresholds import routed_thresholds
 
+# clf: the fitted HierarchicalClassifier from above (its graph_ names the hierarchy)
 scores, scored = np.zeros(Y.shape), np.zeros(Y.shape, dtype=bool)
 for fit_rows, score_rows in KFold(5, shuffle=True, random_state=0).split(X):
     fold = clone(clf).set_params(mlb_prediction_threshold=-np.inf).fit(X[fit_rows], Y[fit_rows])

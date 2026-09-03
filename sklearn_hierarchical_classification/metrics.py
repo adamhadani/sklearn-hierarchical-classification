@@ -137,7 +137,7 @@ def h_precision_score(y_true, y_pred, class_hierarchy, root=ROOT):
     For motivation and definition details, see:
 
         Functional Annotation of Genes Using Hierarchical Text
-        Categorization, Kiritchenko et al 2008
+        Categorization, Kiritchenko et al 2005
 
         http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.68.5824&rep=rep1&type=pdf
 
@@ -182,7 +182,7 @@ def h_recall_score(y_true, y_pred, class_hierarchy, root=ROOT):
     For motivation and definition details, see:
 
         Functional Annotation of Genes Using Hierarchical Text
-        Categorization, Kiritchenko et al 2008
+        Categorization, Kiritchenko et al 2005
 
         http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.68.5824&rep=rep1&type=pdf
 
@@ -227,7 +227,7 @@ def h_fbeta_score(y_true, y_pred, class_hierarchy, beta=1.0, root=ROOT):
     For motivation and definition details, see:
 
         Functional Annotation of Genes Using Hierarchical Text
-        Categorization, Kiritchenko et al 2008
+        Categorization, Kiritchenko et al 2005
 
         http://citeseerx.ist.psu.edu/viewdoc/download?doi=10.1.1.68.5824&rep=rep1&type=pdf
 

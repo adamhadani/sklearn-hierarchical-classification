@@ -119,7 +119,8 @@ clf.fit(documents, labels)
 ```
 
 A `Pipeline` also works in the default `"preprocessed"` mode on a feature matrix, for
-example to run a per-node `TruncatedSVD`; see `examples/classify_digits.py`.
+example to run a per-node `TruncatedSVD`; see `examples/classify_digits.py` (runs from a source
+checkout, as it uses the test fixtures).
 
 ## Prediction
 
@@ -159,14 +160,14 @@ Early stopping is a single-label feature and is rejected together with `mlb`.
 
 `progress_wrapper` takes a `tqdm`-style callable (`tqdm`, `tqdm.notebook.tqdm`, ...) that is
 called as `progress_wrapper(total=..., desc=...)` and wraps the training loop with it. Training
-and prediction details are logged on the `HierarchicalClassifier`
-logger at `DEBUG` level.
+details are logged on the `HierarchicalClassifier` logger at `DEBUG` level; a node left without
+training data logs a warning.
 
 ## Parameters at a glance
 
 | Parameter | Default | Meaning |
 |---|---|---|
-| `base_estimator` | `LogisticRegression()` | Estimator, dict by node (`DEFAULT` catch-all) or callable `(node_id=, graph=)`. |
+| `base_estimator` | `None` (a `LogisticRegression` per node) | Estimator, dict by node (`DEFAULT` catch-all) or callable `(node_id=, graph=)`. |
 | `class_hierarchy` | flat | `DiGraph` or adjacency dict rooted at `root`. |
 | `root` | `ROOT` | Identifier of the root node. |
 | `prediction_depth` | `"mlnp"` | `"nmlnp"` allows stopping at intermediate nodes. |

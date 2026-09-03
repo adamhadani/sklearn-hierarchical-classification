@@ -77,7 +77,7 @@ clf = HierarchicalClassifier(
 The [documentation](https://adamhadani.github.io/sklearn-hierarchical-classification/) covers
 hierarchies and base estimators, raw-text pipelines, early stopping, multi-label prediction and
 threshold tuning, the hierarchical metrics, and the API. `examples/classify_digits.py` is a
-complete, runnable example including the metrics.
+complete example including the metrics (it runs from a source checkout, as it uses the test fixtures).
 
 
 ## Benchmarks
@@ -121,7 +121,7 @@ The project is managed with [uv](https://docs.astral.sh/uv/); all tooling config
 
 Versions come from git tags (setuptools-scm); pushing a tag `X.Y.Z` publishes to PyPI and
 creates a GitHub Release. The documentation site is built by Jekyll from `docs/` and published
-to GitHub Pages on every push to `develop`. See [CONTRIBUTING.md](./CONTRIBUTING.md) and the
+to GitHub Pages on every push to `develop` that touches it. See [CONTRIBUTING.md](./CONTRIBUTING.md) and the
 [Development](https://adamhadani.github.io/sklearn-hierarchical-classification/development) page.
 
 Upgrading from the 1.3.x releases? Read the

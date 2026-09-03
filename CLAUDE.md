@@ -105,7 +105,7 @@ The pre-commit hook runs `-m "not slow"`; CI runs everything with the dataset di
 cached.
 
 **Version comes from git tags only** (setuptools-scm). There is no version string in the
-tree; do not add one (`docs/source/conf.py` reads it from package metadata). Tags are
+tree; do not add one. Tags are
 plain `X.Y.Z` (no `v` prefix), matching the existing tag history, and only tags of that
 exact shape trigger the publish jobs in `publish-to-pypi.yml`, which needs a PyPI trusted
 publisher configured for this repo and a `pypi` GitHub environment.
