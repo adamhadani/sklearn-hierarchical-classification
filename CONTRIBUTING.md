@@ -27,8 +27,8 @@ with the code they describe.
 
 ## Pull requests
 
-This project uses [git-flow](https://github.com/nvie/gitflow): `develop` is the integration branch
-and `master` holds releases. Submit pull requests against `develop`. Every change reaches `develop`
+`develop` is the integration branch and the default; releases are tags cut from it (`master` is
+the historical git-flow release branch). Submit pull requests against `develop`. Every change reaches `develop`
 through a pull request with passing CI, and is squash-merged. Add tests for behaviour changes; the
 existing tests live under `sklearn_hierarchical_classification/tests/`.
 

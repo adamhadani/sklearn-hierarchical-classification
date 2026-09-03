@@ -29,7 +29,7 @@ callouts:
     title: Warning
     color: yellow
 
-footer_content: 'Apache License 2.0. Originally developed at Globality; maintained by Adam Ever-Hadani.'
+footer_content: 'Apache License 2.0. Originally developed at Globality; maintained by the PromptRomp organization.'
 
 exclude:
   - Gemfile

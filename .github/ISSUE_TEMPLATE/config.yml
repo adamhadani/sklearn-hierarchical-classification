@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/promptromp/sklearn-hierarchical-classification/security/advisories/new
+    about: Reported privately to the maintainers; please do not open a public issue for it.
+  - name: Documentation
+    url: https://promptromp.github.io/sklearn-hierarchical-classification/
+    about: Usage guide, multi-label prediction and threshold tuning, API reference.
